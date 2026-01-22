@@ -98,3 +98,21 @@ Please do not use AI. Thank you.
 <p align="center">
 	<img src="https://github.com/Open-KO/KnightOnline/blob/master/openko_example.png?raw=true" />
 </p>
+
+## PHP Web Editor (Docker)
+
+A `php-editor` service is now defined in `docker-compose.yaml` so you can host or edit PHP code that targets the `KN_online` schema. It builds from `docker/php/Dockerfile` (PHP 8.2 + `sqlsrv`/`pdo_sqlsrv` extensions) and exposes port `8080` on the host.
+
+1. Create a `web/` directory at the repository root and place your `.php` scripts there.
+2. Run `docker compose up -d php-editor` to build the image and mount `./web` to `/var/www/html`.
+3. Open <http://localhost:8080> in your browser; PHP scripts can read the following environment variables (available inside the container) to connect to SQL Server: `SQLSERVER_HOST`, `SQLSERVER_PORT`, `SQLSERVER_DATABASE`, `SQLSERVER_USERNAME`, `SQLSERVER_PASSWORD`. The defaults mirror the SQL container configuration (`sqlserver:1433`, `KN_online`, `knight/knight`).
+
+The PHP service shares the `backend` network with the SQL Server container, so `sqlserver` resolves correctly. Restart the container after modifying the Dockerfile or enabling more extensions.
+
+## Adminer (Web GUI for SQL Server)
+
+An `adminer` service is now part of `docker-compose.yaml` so you can manage `KN_online` directly from a browser.
+
+1. `docker compose up -d adminer` launches Adminer on `http://localhost:8081`.
+2. Log in with `Server=sqlserver`, `Username=knight`, `Password=knight`, `Database=KN_online`.
+3. Adminer runs on the same `backend` network, so it can reach the SQL Server container without host hostnames; use it for browsing tables, running SQL, or exporting data.
