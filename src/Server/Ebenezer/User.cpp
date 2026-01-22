@@ -11831,6 +11831,10 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 					static_cast<float>(pExec->m_ExecInt[2]));
 				break;
 
+			case EXEC_PROMOTE_USER_NOVICE:
+				ClassChangeReq();
+				break;
+
 			case EXEC_RETURN:
 				return false;
 
