@@ -96,6 +96,11 @@ void EXEC::Parse(const char* line, const std::string& filename, int lineNumber)
 			m_Exec = EXEC_PROMOTE_USER_NOVICE;
 			break;
 
+		// E PROMOTE_USER
+		case "PROMOTE_USER"_djb2:
+			m_Exec = EXEC_PROMOTE_USER;
+			break;
+
 		default:
 			spdlog::warn("EXEC::Parse: unhandled opcode '{}' ({}:{})", temp, filename, lineNumber);
 			break;

@@ -249,6 +249,7 @@ public:
 	void RecvDeleteChar(const char* pBuf);
 	bool ExistComEvent(int eventid) const;
 	void SaveComEvent(int eventid);
+	void SaveEvent(int eventid, int value);
 	bool CheckItemCount(int itemid, int16_t min, int16_t max) const;
 	bool CheckClanGrade(int min, int max) const;
 	bool CheckKnight() const;
@@ -278,12 +279,16 @@ public:
 	bool GiveItem(int itemid, int16_t count);
 	bool RobItem(int itemid, int16_t count);
 	bool CheckExistItem(int itemid, int16_t count) const;
+	bool CheckExistItemAnd(int itemid1, int16_t count1, int itemid2, int16_t count2,
+		int itemid3, int16_t count3, int itemid4, int16_t count4, int itemid5, int16_t count5) const;
 	bool CheckWeight(int itemid, int16_t count) const;
 	bool CheckSkillPoint(uint8_t skillnum, uint8_t min, uint8_t max) const;
 	bool CheckSkillTotal(uint8_t min, uint8_t max) const;
 	bool CheckStatTotal(uint8_t min, uint8_t max) const;
 	bool CheckExistEvent(int16_t questId, uint8_t questState) const;
 	bool GoldLose(int gold);
+	void PromoteUser();
+	void PromoteUserNovice();
 	void GoldGain(int gold);
 	void SendItemWeight();
 	void ItemLogToAgent(const char* srcid, const char* tarid, int type, int64_t serial, int itemid,
