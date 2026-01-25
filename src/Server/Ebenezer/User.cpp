@@ -7015,8 +7015,6 @@ void CUser::ClassChange(char* pBuf)
 	bool bSuccess = false;
 
 	type          = GetByte(pBuf, index);
-	spdlog::debug("User::ClassChange: type=0x{:02X} class={} level={}", type,
-		m_pUserData->m_sClass, m_pUserData->m_bLevel);
 
 	// 전직요청
 	if (type == CLASS_CHANGE_REQ)
@@ -7109,7 +7107,6 @@ void CUser::ClassChange(char* pBuf)
 	}
 
 	classcode = GetByte(pBuf, index);
-	spdlog::debug("User::ClassChange: requestClassCode={}", classcode);
 
 	switch (m_pUserData->m_sClass)
 	{
@@ -7165,13 +7162,10 @@ void CUser::ClassChange(char* pBuf)
 		SetByte(sendBuffer, CLASS_CHANGE_RESULT, sendIndex);
 		SetByte(sendBuffer, 0, sendIndex);
 		Send(sendBuffer, sendIndex);
-		spdlog::debug("User::ClassChange: failed class change [currentClass={} requestClassCode={}]",
-			m_pUserData->m_sClass, classcode);
 	}
 	else
 	{
 		m_pUserData->m_sClass = classcode;
-		spdlog::debug("User::ClassChange: class changed [newClass={}]", m_pUserData->m_sClass);
 
 		if (m_sPartyIndex != -1)
 		{
@@ -9125,8 +9119,6 @@ void CUser::ClassChangeReq()
 		SetByte(sendBuffer, 1, sendIndex);
 	}
 
-	spdlog::debug("User::ClassChangeReq: level={} class={} result={}", m_pUserData->m_bLevel,
-		m_pUserData->m_sClass, sendBuffer[sendIndex - 1]);
 	Send(sendBuffer, sendIndex);
 }
 
@@ -11781,10 +11773,6 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 			if (pExec == nullptr)
 				break;
 
-			spdlog::debug("User::RunEvent: zoneId={} opcode=0x{:02X} args=[{}, {}, {}, {}]",
-				m_pUserData->m_bZone, pExec->m_Exec, pExec->m_ExecInt[0], pExec->m_ExecInt[1],
-				pExec->m_ExecInt[2], pExec->m_ExecInt[3]);
-
 			if (pExec->m_Exec == EXEC_NONE)
 				continue;
 
@@ -12660,7 +12648,6 @@ void CUser::PromoteUserNovice()
 			newClass = CLASS_EL_CLERIC; // Assign new class.
 			break; // Stop switch.
 		default: // Not a base class.
-			spdlog::debug("User::PromoteUserNovice: invalid base class {}", m_pUserData->m_sClass); // Log invalid state.
 			return; // Abort.
 	}
 
