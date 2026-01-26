@@ -68,6 +68,12 @@ void EXEC::Parse(const char* line, const std::string& filename, int lineNumber)
 			argsToParse = 3;
 			break;
 
+		// E SAVE_EVENT {quest ID} {quest state}
+		case "SAVE_EVENT"_djb2:
+			m_Exec      = EXEC_SAVE_EVENT;
+			argsToParse = 2;
+			break;
+
 		// E GIVE_NOAH {amount}
 		case "GIVE_NOAH"_djb2:
 			m_Exec      = EXEC_GIVE_NOAH;

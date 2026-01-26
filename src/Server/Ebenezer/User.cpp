@@ -11832,6 +11832,10 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 				SaveComEvent(pExec->m_ExecInt[0]);
 				break;
 
+			case EXEC_SAVE_EVENT:
+				SaveEvent(pExec->m_ExecInt[0], pExec->m_ExecInt[1]);
+				break;
+
 			case EXEC_ROB_NOAH:
 				GoldLose(pExec->m_ExecInt[0]);
 				break;
@@ -13261,9 +13265,52 @@ bool CUser::ExistComEvent(int eventid) const
 
 void CUser::SaveEvent(int eventid, int value)
 {
-	(void) eventid;
-	(void) value;
-	// TODO: persist quest progression once the SAVE_EVENT script command is wired up.
+	if (eventid <= 0 || eventid > 100)
+		return;
+
+	uint8_t newState = static_cast<uint8_t>(value);
+	if (newState > QUEST_STATE_COMPLETE)
+		newState = QUEST_STATE_COMPLETE;
+
+	int emptyIndex = -1;
+	for (int i = 0; i < MAX_QUEST; i++)
+	{
+		_USER_QUEST& quest = m_pUserData->m_quests[i];
+		if (quest.sQuestID == eventid)
+		{
+			if (newState == QUEST_STATE_NOT_STARTED)
+			{
+				quest.sQuestID = 0;
+				quest.byQuestState = QUEST_STATE_NOT_STARTED;
+			}
+			else
+			{
+				quest.byQuestState = newState;
+			}
+			goto recount;
+		}
+
+		if (emptyIndex == -1 && quest.sQuestID == 0)
+			emptyIndex = i;
+	}
+
+	if (newState != QUEST_STATE_NOT_STARTED && emptyIndex != -1)
+	{
+		_USER_QUEST& quest = m_pUserData->m_quests[emptyIndex];
+		quest.sQuestID = eventid;
+		quest.byQuestState = newState;
+	}
+
+recount:
+	{
+		int16_t total = 0;
+		for (int i = 0; i < MAX_QUEST; i++)
+		{
+			if (m_pUserData->m_quests[i].sQuestID > 0)
+				++total;
+		}
+		m_pUserData->m_sQuestCount = total;
+	}
 }
 
 void CUser::RecvDeleteChar(const char* pBuf)
