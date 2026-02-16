@@ -12,6 +12,8 @@
 #include <shared/StringUtils.h>
 #include <spdlog/spdlog.h>
 
+#include <unordered_set>
+
 namespace Ebenezer
 {
 
@@ -283,6 +285,10 @@ void CUser::SendCompressingPacket(const char* pData, int len)
 
 void CUser::RegionPacketAdd(char* pBuf, int len)
 {
+	assert(_regionBuffer != nullptr);
+	if (_regionBuffer == nullptr)
+		return;
+
 	std::lock_guard<std::recursive_mutex> lock(g_region_mutex);
 
 	SetShort(_regionBuffer->pDataBuff, len, _regionBuffer->iLength);
@@ -292,14 +298,14 @@ void CUser::RegionPacketAdd(char* pBuf, int len)
 int CUser::RegionPacketClear(char* GetBuf)
 {
 	int index = 0;
-	SetByte(GetBuf, WIZ_CONTINOUS_PACKET, index);
 
 	{
 		std::lock_guard<std::recursive_mutex> lock(g_region_mutex);
 
-		if (_regionBuffer->iLength <= 0)
+		if (_regionBuffer == nullptr || _regionBuffer->iLength <= 0)
 			return 0;
 
+		SetByte(GetBuf, WIZ_CONTINOUS_PACKET, index);
 		SetShort(GetBuf, _regionBuffer->iLength, index);
 		SetString(GetBuf, _regionBuffer->pDataBuff, _regionBuffer->iLength, index);
 
@@ -736,6 +742,10 @@ void CUser::Parsing(int len, char* pData)
 
 		case WIZ_EDIT_BOX:
 			RecvEditBox(pData + index);
+			break;
+
+		case WIZ_ITEM_UPGRADE:
+			ItemUpgradeProcess(pData + index);
 			break;
 
 		default:
@@ -9723,7 +9733,7 @@ void CUser::InitType3()
 	m_bType3Flag = false;
 }
 
-bool CUser::BindObjectEvent(int16_t objectindex, int16_t /*nid*/)
+bool CUser::BindObjectEvent(int16_t objectIndex, int16_t /*npcId*/)
 {
 	int sendIndex = 0, result = 0;
 	char sendBuffer[128] {};
@@ -9732,7 +9742,7 @@ bool CUser::BindObjectEvent(int16_t objectindex, int16_t /*nid*/)
 	if (pMap == nullptr)
 		return false;
 
-	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectindex);
+	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
 		return false;
 
@@ -9754,7 +9764,7 @@ bool CUser::BindObjectEvent(int16_t objectindex, int16_t /*nid*/)
 	return true;
 }
 
-bool CUser::GateObjectEvent(int16_t objectindex, int16_t nid)
+bool CUser::GateObjectEvent(int16_t objectIndex, int16_t npcId)
 {
 	// 포인터 참조하면 안됨
 	if (!m_pMain->m_bPointCheckFlag)
@@ -9767,11 +9777,11 @@ bool CUser::GateObjectEvent(int16_t objectindex, int16_t nid)
 	if (pMap == nullptr)
 		return false;
 
-	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectindex);
+	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
 		return false;
 
-	CNpc* pNpc = m_pMain->m_NpcMap.GetData(nid);
+	CNpc* pNpc = m_pMain->m_NpcMap.GetData(npcId);
 	if (pNpc == nullptr)
 		return false;
 
@@ -9785,7 +9795,7 @@ bool CUser::GateObjectEvent(int16_t objectindex, int16_t nid)
 		memset(sendBuffer, 0, sizeof(sendBuffer));
 		sendIndex = 0;
 		SetByte(sendBuffer, AG_NPC_GATE_OPEN, sendIndex);
-		SetShort(sendBuffer, nid, sendIndex);
+		SetShort(sendBuffer, npcId, sendIndex);
 		SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 		m_pMain->Send_AIServer(m_pUserData->m_bZone, sendBuffer, sendIndex);
 	}
@@ -9799,7 +9809,7 @@ bool CUser::GateObjectEvent(int16_t objectindex, int16_t nid)
 	SetByte(sendBuffer, WIZ_OBJECT_EVENT, sendIndex);
 	SetByte(sendBuffer, static_cast<uint8_t>(pEvent->sType), sendIndex);
 	SetByte(sendBuffer, result, sendIndex);
-	SetShort(sendBuffer, nid, sendIndex);
+	SetShort(sendBuffer, npcId, sendIndex);
 	SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 	m_pMain->Send_Region(
 		sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, false);
@@ -9807,7 +9817,7 @@ bool CUser::GateObjectEvent(int16_t objectindex, int16_t nid)
 	return true;
 }
 
-bool CUser::GateLeverObjectEvent(int16_t objectindex, int16_t nid)
+bool CUser::GateLeverObjectEvent(int16_t objectIndex, int16_t npcId)
 {
 	// 포인터 참조하면 안됨
 	if (!m_pMain->m_bPointCheckFlag)
@@ -9820,11 +9830,11 @@ bool CUser::GateLeverObjectEvent(int16_t objectindex, int16_t nid)
 	if (pMap == nullptr)
 		return false;
 
-	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectindex);
+	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
 		return false;
 
-	CNpc* pNpc = m_pMain->m_NpcMap.GetData(nid);
+	CNpc* pNpc = m_pMain->m_NpcMap.GetData(npcId);
 	if (pNpc == nullptr)
 		return false;
 
@@ -9853,11 +9863,11 @@ bool CUser::GateLeverObjectEvent(int16_t objectindex, int16_t nid)
 			memset(sendBuffer, 0, sizeof(sendBuffer));
 			sendIndex = 0;
 			SetByte(sendBuffer, AG_NPC_GATE_OPEN, sendIndex);
-			SetShort(sendBuffer, nid, sendIndex);
+			SetShort(sendBuffer, npcId, sendIndex);
 			SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 			m_pMain->Send_AIServer(m_pUserData->m_bZone, sendBuffer, sendIndex);
 
-			pGateNpc->m_byGateOpen = !pGateNpc->m_byGateOpen;
+			pGateNpc->m_byGateOpen = pGateNpc->m_byGateOpen ? 0 : 1;
 			memset(sendBuffer, 0, sizeof(sendBuffer));
 			sendIndex = 0;
 			SetByte(sendBuffer, AG_NPC_GATE_OPEN, sendIndex);
@@ -9887,7 +9897,7 @@ bool CUser::GateLeverObjectEvent(int16_t objectindex, int16_t nid)
 	SetByte(sendBuffer, WIZ_OBJECT_EVENT, sendIndex);
 	SetByte(sendBuffer, static_cast<uint8_t>(pEvent->sType), sendIndex);
 	SetByte(sendBuffer, result, sendIndex);
-	SetShort(sendBuffer, nid, sendIndex);
+	SetShort(sendBuffer, npcId, sendIndex);
 	SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 	m_pMain->Send_Region(
 		sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, false);
@@ -9895,7 +9905,7 @@ bool CUser::GateLeverObjectEvent(int16_t objectindex, int16_t nid)
 	return true;
 }
 
-bool CUser::FlagObjectEvent(int16_t objectindex, int16_t nid)
+bool CUser::FlagObjectEvent(int16_t objectIndex, int16_t npcId)
 {
 	// 포인터 참조하면 안됨
 	if (!m_pMain->m_bPointCheckFlag)
@@ -9908,11 +9918,11 @@ bool CUser::FlagObjectEvent(int16_t objectindex, int16_t nid)
 	if (pMap == nullptr)
 		return false;
 
-	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectindex);
+	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
 		return false;
 
-	CNpc* pNpc = m_pMain->m_NpcMap.GetData(nid);
+	CNpc* pNpc = m_pMain->m_NpcMap.GetData(npcId);
 	if (pNpc == nullptr)
 		return false;
 
@@ -9949,7 +9959,7 @@ bool CUser::FlagObjectEvent(int16_t objectindex, int16_t nid)
 			memset(sendBuffer, 0, sizeof(sendBuffer));
 			sendIndex = 0;
 			SetByte(sendBuffer, AG_NPC_GATE_OPEN, sendIndex);
-			SetShort(sendBuffer, nid, sendIndex);
+			SetShort(sendBuffer, npcId, sendIndex);
 			SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 			m_pMain->Send_AIServer(m_pUserData->m_bZone, sendBuffer, sendIndex);
 			memset(sendBuffer, 0, sizeof(sendBuffer));
@@ -9994,7 +10004,7 @@ bool CUser::FlagObjectEvent(int16_t objectindex, int16_t nid)
 	SetByte(sendBuffer, WIZ_OBJECT_EVENT, sendIndex);
 	SetByte(sendBuffer, static_cast<uint8_t>(pEvent->sType), sendIndex);
 	SetByte(sendBuffer, result, sendIndex);
-	SetShort(sendBuffer, nid, sendIndex);
+	SetShort(sendBuffer, npcId, sendIndex);
 	SetByte(sendBuffer, pNpc->m_byGateOpen, sendIndex);
 	m_pMain->Send_Region(
 		sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, false);
@@ -10002,13 +10012,13 @@ bool CUser::FlagObjectEvent(int16_t objectindex, int16_t nid)
 	return true;
 }
 
-bool CUser::WarpListObjectEvent(int16_t objectindex, int16_t /*nid*/)
+bool CUser::WarpListObjectEvent(int16_t objectIndex, int16_t /*npcId*/)
 {
 	C3DMap* pMap = m_pMain->GetMapByIndex(m_iZoneIndex);
 	if (pMap == nullptr)
 		return false;
 
-	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectindex);
+	_OBJECT_EVENT* pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
 		return false;
 
@@ -10026,78 +10036,101 @@ bool CUser::WarpListObjectEvent(int16_t objectindex, int16_t /*nid*/)
 	return true;
 }
 
+void CUser::SendItemUpgradeRequest(int16_t npcId)
+{
+	if (m_pUserData->m_bZone != ZONE_MORADON)
+		return;
+
+	CNpc* pNpc = m_pMain->m_NpcMap.GetData(npcId);
+	if (pNpc == nullptr || pNpc->m_tNpcType != NPC_ANVIL)
+		return;
+
+	// Check distance to anvil
+	float distance = GetDistanceSquared2D(pNpc->m_fCurX, pNpc->m_fCurZ);
+	if (distance > MAX_INTERACTION_RANGE_SQUARED)
+		return;
+
+	int send_index = 0;
+	char send_buff[4] {};
+	SetByte(send_buff, WIZ_ITEM_UPGRADE, send_index);
+	SetByte(send_buff, ITEM_UPGRADE_REQ, send_index);
+	SetShort(send_buff, npcId, send_index);
+	Send(send_buff, send_index);
+}
+
 void CUser::ObjectEvent(char* pBuf)
 {
-	int index = 0, objectindex = 0, sendIndex = 0, nid = 0;
+	int index = 0, objectIndex = 0, npcId = 0;
 	uint8_t objectType    = 0;
 	C3DMap* pMap          = nullptr;
 	_OBJECT_EVENT* pEvent = nullptr;
-	char sendBuffer[128] {};
 
-	objectindex = GetShort(pBuf, index);
-	nid         = GetShort(pBuf, index);
+	objectIndex           = GetShort(pBuf, index);
+	npcId                 = GetShort(pBuf, index);
 
-	pMap        = m_pMain->GetMapByIndex(m_iZoneIndex);
+	pMap                  = m_pMain->GetMapByIndex(m_iZoneIndex);
 	if (pMap == nullptr)
-		goto fail_return;
+		return;
 
-	pEvent = pMap->GetObjectEvent(objectindex);
+	pEvent = pMap->GetObjectEvent(objectIndex);
 	if (pEvent == nullptr)
-		goto fail_return;
+	{
+		SendObjectEventFailed(objectType);
+		return;
+	}
 
 	objectType = static_cast<uint8_t>(pEvent->sType);
 
 	switch (pEvent->sType)
 	{
-		// Bind Point
-		case 0:
-
-		// Destory Bind Point
-		case 7:
-			if (!BindObjectEvent(objectindex, nid))
-				goto fail_return;
+		case OBJECT_TYPE_BIND:
+		case OBJECT_TYPE_REMOVE_BIND:
+			if (!BindObjectEvent(objectIndex, npcId))
+				SendObjectEventFailed(objectType);
 			break;
 
-		// Gate Object : 사용치 않음 : 2002.12.23
-		case 1:
-		case 2:
-			//if (!GateObjectEvent(objectindex, nid))
-			//	goto fail_return;
+		case OBJECT_TYPE_GATE:
+		case OBJECT_TYPE_DOOR_TOPDOWN:
+			//if (!GateObjectEvent(objectIndex, npcId))
+			// SendObjectEventFailed(objectType);
 			break;
 
-		// Gate lever Object
-		case 3:
-			if (!GateLeverObjectEvent(objectindex, nid))
-				goto fail_return;
+		case OBJECT_TYPE_GATE_LEVER:
+			if (!GateLeverObjectEvent(objectIndex, npcId))
+				SendObjectEventFailed(objectType);
 			break;
 
-		// Flag Lever Object
-		case 4:
-			if (!FlagObjectEvent(objectindex, nid))
-				goto fail_return;
+		// Flag lever
+		case OBJECT_TYPE_FLAG:
+			if (!FlagObjectEvent(objectIndex, npcId))
+				SendObjectEventFailed(objectType);
 			break;
 
-		// Warp List
-		case 5:
-			if (!WarpListObjectEvent(objectindex, nid))
-				goto fail_return;
+		case OBJECT_TYPE_WARP_GATE:
+			if (!WarpListObjectEvent(objectIndex, npcId))
+				SendObjectEventFailed(objectType);
+			break;
+
+		case OBJECT_TYPE_ANVIL:
+			SendItemUpgradeRequest(npcId);
 			break;
 
 		default:
 			spdlog::error("User::ObjectEvent: Unhandled object type {} [objectIndex={} npcId={} "
 						  "accountName={} characterName={}]",
-				pEvent->sType, objectindex, nid, m_strAccountID, m_pUserData->m_id);
-#ifndef _DEBUG
-			Close();
-#endif
-			goto fail_return;
+				pEvent->sType, objectIndex, npcId, m_strAccountID, m_pUserData->m_id);
+			SendObjectEventFailed(objectType);
+			break;
 	}
-	return;
+}
 
-fail_return:
+void CUser::SendObjectEventFailed(uint8_t objectType, uint8_t errorCode /*= 0*/)
+{
+	int sendIndex = 0;
+	char sendBuffer[8] {};
 	SetByte(sendBuffer, WIZ_OBJECT_EVENT, sendIndex);
 	SetByte(sendBuffer, objectType, sendIndex);
-	SetByte(sendBuffer, 0, sendIndex);
+	SetByte(sendBuffer, errorCode, sendIndex);
 	Send(sendBuffer, sendIndex);
 }
 
@@ -13108,6 +13141,465 @@ void CUser::ResetEditBox()
 	memset(m_strCouponId, 0, sizeof(m_strCouponId));
 }
 
+void CUser::ItemUpgradeProcess(char* pBuf)
+{
+	int index           = 0;
+	uint8_t upgradeType = GetByte(pBuf, index);
+	if (upgradeType == ITEM_UPGRADE_PROCESS)
+		ItemUpgrade(pBuf + index);
+	else if (upgradeType == ITEM_UPGRADE_ACCESSORIES)
+		ItemUpgradeAccesories(pBuf + index);
+}
+
+void CUser::ItemUpgrade(char* pBuf)
+{
+	model::Item *originItemModel = nullptr, *upgradedItemModel = nullptr;
+	const model::ItemUpgrade* matchedItemUpgradeModel = nullptr;
+
+	uint32_t newItemId = 0, itemClass = 0, itemUpgradeElementClass = 0;
+	int16_t rand = 0, baseItemId = 0;
+	int32_t originItemId = 0;
+	int index            = 0;
+	uint16_t npcId       = 0;
+	uint8_t originPos    = -1;
+	bool upgradeSuccess  = false;
+
+	uint8_t reqItemPos[ANVIL_REQ_MAX] {};
+	int32_t reqItemId[ANVIL_REQ_MAX] {};
+
+	npcId        = GetShort(pBuf, index);
+	originItemId = GetDWORD(pBuf, index);
+	originPos    = GetByte(pBuf, index);
+
+	for (int i = 0; i < ANVIL_REQ_MAX; i++)
+	{
+		reqItemId[i]  = GetDWORD(pBuf, index);
+		reqItemPos[i] = GetByte(pBuf, index);
+	}
+
+	// Cannot upgrade while in the middle of trading.
+	if (m_sExchangeUser != -1)
+	{
+		SendItemUpgradeFailed(ITEM_UPGRADE_RESULT_TRADING);
+		return;
+	}
+
+	// Ensure origin item position is valid
+	// Note that originPos is unsigned so we don't care about checking < 0.
+	if (originPos >= HAVE_MAX)
+	{
+		spdlog::error(
+			"User::ItemUpgrade: invalid originPos [accountId={} characterName={} originPos={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, originPos);
+		return;
+	}
+
+	// The requested NPC must exist
+	CNpc* npc = m_pMain->m_NpcMap.GetData(npcId);
+	if (npc == nullptr)
+	{
+		spdlog::error("User::ItemUpgrade: NPC not found [accountId={} characterName={} npcId={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, npcId);
+		return;
+	}
+
+	// The requested NPC should be the anvil.
+	if (npc->m_tNpcType != NPC_ANVIL)
+	{
+		spdlog::error("User::ItemUpgrade: NPC is not the anvil [accountId={} characterName={} "
+					  "npcId={} npcType={} npcName={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, npcId, npc->m_tNpcType, npc->m_strName);
+		return;
+	}
+
+	// Ensure we're in the same zone as the NPC.
+	if (npc->m_sCurZone != m_pUserData->m_bZone)
+	{
+		spdlog::error("User::ItemUpgrade: not in same zone as NPC [accountId={} characterName={} "
+					  "npcId={} npcType={} npcName={} ourZoneId={} npcZoneId={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, npcId, npc->m_tNpcType, npc->m_strName,
+			m_pUserData->m_bZone, npc->m_sCurZone);
+		return;
+	}
+
+	// Ensure we're close enough to interact with it.
+	float distance = GetDistanceSquared2D(npc->m_fCurX, npc->m_fCurZ);
+	if (distance > MAX_INTERACTION_RANGE_SQUARED)
+	{
+		spdlog::error("User::ItemUpgrade: NPC is out of range [accountId={} characterName={} "
+					  "npcId={} npcType={} npcName={} ourPos={},{} npcPos={},{} distance={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, npcId, npc->m_tNpcType, npc->m_strName,
+			m_pUserData->m_curx, m_pUserData->m_curz, npc->m_fCurX, npc->m_fCurZ, distance);
+		return;
+	}
+
+	std::unordered_set<uint8_t> usedItemPositions;
+	usedItemPositions.insert(originPos);
+
+	for (int i = 0; i < ANVIL_REQ_MAX; i++)
+	{
+		// This implies the slot is unused, so we should ignore it.
+		if (reqItemPos[i] == 255)
+			continue;
+
+		// Ensure requirement item positions are valid
+		if (reqItemPos[i] >= HAVE_MAX)
+		{
+			spdlog::error("User::ItemUpgrade: invalid reqItemPos [accountId={} "
+						  "characterName={} i={} reqItemPos={}]",
+				m_pUserData->m_Accountid, m_pUserData->m_id, i, reqItemPos[i]);
+			return;
+		}
+
+		// Verify item ID actually exists
+		const model::Item* reqItemModel = m_pMain->m_ItemTableMap.GetData(reqItemId[i]);
+		if (reqItemModel == nullptr)
+		{
+			spdlog::error("User::ItemUpgrade: invalid reqItemId [accountId={} "
+						  "characterName={} i={} reqItemId={}]",
+				m_pUserData->m_Accountid, m_pUserData->m_id, i, reqItemId[i]);
+			return;
+		}
+
+		// Verify we actually have one of this item in the slot
+		const _ITEM_DATA& reqItem = m_pUserData->m_sItemArray[SLOT_MAX + reqItemPos[i]];
+		if (reqItem.sCount <= 0)
+		{
+			spdlog::error("User::ItemUpgrade: invalid stack size [accountId={} "
+						  "characterName={} i={} reqItemId={} reqItemPos={} stackSize={}]",
+				m_pUserData->m_Accountid, m_pUserData->m_id, i, reqItemId[i], reqItemPos[i],
+				reqItem.sCount);
+			return;
+		}
+
+		// And that it is the expected item.
+		if (reqItemId[i] != reqItem.nNum)
+		{
+			spdlog::error("User::ItemUpgrade: unexpected item in requirement slot [accountId={} "
+						  "characterName={} reqItemId={} i={} reqItemPos={} existingItemId={}]",
+				m_pUserData->m_Accountid, m_pUserData->m_id, i, reqItemId[i], reqItemPos[i],
+				reqItem.nNum);
+			return;
+		}
+
+		// Verify this position hasn't already been used before.
+		if (usedItemPositions.contains(reqItemPos[i]))
+		{
+			spdlog::error("User::ItemUpgrade: requirement slot already in use [accountId={} "
+						  "characterName={} i={} reqItemPos={}]",
+				m_pUserData->m_Accountid, m_pUserData->m_id, i, reqItemPos[i]);
+			return;
+		}
+
+		usedItemPositions.insert(reqItemPos[i]);
+	}
+
+	// Verify item ID actually exists
+	originItemModel = m_pMain->m_ItemTableMap.GetData(originItemId);
+	if (originItemModel == nullptr)
+	{
+		spdlog::error("User::ItemUpgrade: invalid originItemId [accountId={} characterName={} "
+					  "originItemId={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, originItemId);
+		return;
+	}
+
+	_ITEM_DATA& originItem = m_pUserData->m_sItemArray[SLOT_MAX + originPos];
+
+	// Verify origin item exists and matches what the client says is in this slot
+	if (originItem.nNum != originItemId)
+	{
+		spdlog::error("User::ItemUpgrade: unexpected item in origin slot [accountId={} "
+					  "characterName={} originItemId={} originItemPos={} existingItemId={}]",
+			m_pUserData->m_Accountid, m_pUserData->m_id, originItemId, originPos, originItem.nNum);
+		return;
+	}
+
+	// Rented items cannot be upgraded
+	// In later versions this also applies to sealed items, but 1.298 only
+	// supports rental items.
+	if (originItem.byFlag != ITEM_FLAG_NONE)
+	{
+		SendItemUpgradeFailed(ITEM_UPGRADE_RESULT_ITEM_RENTED);
+		return;
+	}
+
+	baseItemId = originItemId % 1000;
+	itemClass  = originItemId / 100'000'000;
+
+	for (const model::ItemUpgrade* itemUpgradeModel : m_pMain->m_ItemUpgradeTableArray)
+	{
+		if (itemUpgradeModel == nullptr)
+			continue;
+
+		if (itemUpgradeModel->OriginItem != baseItemId)
+			continue;
+
+		itemUpgradeElementClass = itemUpgradeModel->Index / 100'000;
+		if (itemClass != itemUpgradeElementClass && itemUpgradeModel->Index < 300'000)
+			continue;
+
+		if (itemUpgradeModel->OriginType != -1)
+		{
+			if (itemUpgradeModel->Index >= 100'000 && itemUpgradeModel->Index < 200'000)
+			{
+				switch (itemUpgradeModel->OriginType)
+				{
+					case 0:
+						if (originItemModel->Kind != ITEM_CLASS_DAGGER)
+							continue;
+						break;
+
+					case 1:
+						if (originItemModel->Kind != ITEM_CLASS_SWORD)
+							continue;
+						break;
+
+					case 2:
+						if (originItemModel->Kind != ITEM_CLASS_SWORD_2H)
+							continue;
+						break;
+
+					case 3:
+						if (originItemModel->Kind != ITEM_CLASS_AXE)
+							continue;
+						break;
+
+					case 4:
+						if (originItemModel->Kind != ITEM_CLASS_AXE_2H)
+							continue;
+						break;
+
+					case 5:
+						if (originItemModel->Kind != ITEM_CLASS_MACE)
+							continue;
+						break;
+
+					case 6:
+						if (originItemModel->Kind != ITEM_CLASS_MACE_2H)
+							continue;
+						break;
+
+					case 7:
+						if (originItemModel->Kind != ITEM_CLASS_SPEAR)
+							continue;
+						break;
+
+					case 8:
+						if (originItemModel->Kind != ITEM_CLASS_POLEARM)
+							continue;
+						break;
+
+					case 9:
+						if (originItemModel->Kind != ITEM_CLASS_BOW)
+							continue;
+						break;
+
+					case 10:
+						if (originItemModel->Kind != ITEM_CLASS_STAFF)
+							continue;
+						break;
+
+					case 11:
+						if ((originItemId / 10'000'000) != 19)
+							continue;
+						break;
+
+					case 12:
+						if (originItemModel->Kind != ITEM_CLASS_SHIELD)
+							continue;
+						break;
+
+					default:
+						break;
+				}
+			}
+			else if (itemUpgradeModel->Index >= 200'000 && itemUpgradeModel->Index < 300'000)
+			{
+				if (itemUpgradeModel->OriginType != originItemModel->Slot + 8)
+					continue;
+			}
+			else if (itemUpgradeModel->Index >= 300'000 && itemUpgradeModel->Index < 400'000)
+			{
+				if (originItemModel->Slot != itemUpgradeModel->OriginType + 73)
+					continue;
+			}
+		}
+
+		if ((itemUpgradeElementClass == 1 || itemUpgradeElementClass == 2)
+			&& itemClass != itemUpgradeElementClass)
+		{
+			SendItemUpgradeFailed(ITEM_UPGRADE_RESULT_NO_MATCH);
+			return;
+		}
+
+		bool matchedRequiredItems = true;
+		for (int j = 0; j < ANVIL_REQ_MAX - 1; j++)
+		{
+			if (itemUpgradeModel->RequiredItem[j] == 0)
+				break;
+
+			if (!MatchingItemUpgrade(
+					reqItemPos[j], reqItemId[j], itemUpgradeModel->RequiredItem[j]))
+			{
+				matchedRequiredItems = false;
+				break;
+			}
+		}
+
+		if (!matchedRequiredItems)
+			continue;
+
+		if (itemUpgradeModel->RequiredCoins > m_pUserData->m_iGold)
+		{
+			SendItemUpgradeFailed(ITEM_UPGRADE_RESULT_NEED_COINS);
+			return;
+		}
+
+		matchedItemUpgradeModel = itemUpgradeModel;
+		break;
+	}
+
+	if (matchedItemUpgradeModel == nullptr)
+	{
+		SendItemUpgradeFailed(ITEM_UPGRADE_RESULT_NO_MATCH);
+		return;
+	}
+
+	GoldLose(matchedItemUpgradeModel->RequiredCoins);
+
+	// The outer myrand call officially uses CRandomizer (a state-based randomizer).
+	// It essentially behaves more consistently and predictably, repeating its results
+	// far more frequently than the standard random number generator (which isn't really
+	// a good thing at all).
+	rand           = myrand(0, myrand(9000, 10000));
+	upgradeSuccess = (matchedItemUpgradeModel->GenRate > rand);
+
+	if (upgradeSuccess)
+	{
+		newItemId         = originItemId + matchedItemUpgradeModel->GiveItem;
+
+		upgradedItemModel = m_pMain->m_ItemTableMap.GetData(newItemId);
+		if (upgradedItemModel == nullptr)
+		{
+			upgradeSuccess = false;
+			ItemLogToAgent(m_pUserData->m_id, "UPGRADE", ITEM_LOG_UPGRADE, originItem.nSerialNum,
+				originItemId, 1, originItem.sDuration);
+		}
+		else
+		{
+			originItem.nNum           = newItemId;
+			originItem.sCount         = 1;
+			originItem.sDuration      = upgradedItemModel->Durability;
+			originItem.byFlag         = 0;
+			originItem.sTimeRemaining = 0;
+
+			ItemLogToAgent(m_pUserData->m_id, "UPGRADE", ITEM_LOG_UPGRADE, originItem.nSerialNum,
+				originItemId, 1, upgradedItemModel->Durability);
+		}
+	}
+	else
+	{
+		ItemLogToAgent(m_pUserData->m_id, "UPGRADE", ITEM_LOG_UPGRADE_FAILED, originItem.nSerialNum,
+			originItemId, 1, 0);
+
+		originItem.nNum           = 0;
+		originItem.sCount         = 0;
+		originItem.sDuration      = 0;
+		originItem.nSerialNum     = 0;
+		originItem.byFlag         = 0;
+		originItem.sTimeRemaining = 0;
+	}
+
+	for (int i = 0; i < ANVIL_REQ_MAX; i++)
+	{
+		if (reqItemPos[i] >= HAVE_MAX)
+			continue;
+
+		auto& reqItem = m_pUserData->m_sItemArray[SLOT_MAX + reqItemPos[i]];
+
+		// Remove a stack from each requirement item
+		--reqItem.sCount;
+
+		// If there's no more left, remove the entire item.
+		if (reqItem.sCount <= 0)
+		{
+			reqItem.nNum           = 0;
+			reqItem.sDuration      = 0;
+			reqItem.byFlag         = 0;
+			reqItem.sTimeRemaining = 0;
+			reqItem.nSerialNum     = 0;
+		}
+	}
+
+	int sendIndex = 0;
+	char sendBuffer[128] {};
+
+	// Send the result to the user
+	SetByte(sendBuffer, WIZ_ITEM_UPGRADE, sendIndex);
+	SetByte(sendBuffer, ITEM_UPGRADE_PROCESS, sendIndex);
+
+	if (upgradeSuccess)
+	{
+		SetByte(sendBuffer, ITEM_UPGRADE_RESULT_SUCCEEDED, sendIndex);
+		SetDWORD(sendBuffer, newItemId, sendIndex);
+	}
+	else
+	{
+		SetByte(sendBuffer, ITEM_UPGRADE_RESULT_FAILED, sendIndex);
+		SetDWORD(sendBuffer, originItemId, sendIndex);
+	}
+
+	SetByte(sendBuffer, originPos, sendIndex);
+
+	for (int i = 0; i < ANVIL_REQ_MAX; i++)
+	{
+		SetDWORD(sendBuffer, reqItemId[i], sendIndex);
+		SetByte(sendBuffer, reqItemPos[i], sendIndex);
+	}
+
+	Send(sendBuffer, sendIndex);
+
+	// Send notification for the anvil's visual effect to the region
+	sendIndex = 0;
+	memset(sendBuffer, 0, sizeof(sendBuffer));
+	SetByte(sendBuffer, WIZ_OBJECT_EVENT, sendIndex);
+	SetByte(sendBuffer, OBJECT_TYPE_ANVIL, sendIndex);
+	SetByte(sendBuffer, upgradeSuccess ? 1 : 0, sendIndex);
+	SetShort(sendBuffer, npcId, sendIndex);
+	m_pMain->Send_Region(
+		sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, true);
+}
+
+bool CUser::MatchingItemUpgrade(
+	uint8_t inventoryPosition, int itemRequested, int itemExpected) const
+{
+	if (inventoryPosition >= HAVE_MAX)
+		return false;
+
+	if (m_pUserData->m_sItemArray[SLOT_MAX + inventoryPosition].nNum != itemRequested)
+		return false;
+
+	if (itemRequested != itemExpected)
+		return false;
+
+	return true;
+}
+
+void CUser::ItemUpgradeAccesories(char* /*pBuf*/)
+{
+}
+
+void CUser::SendItemUpgradeFailed(e_ItemUpgradeResult resultCode)
+{
+	int sendIndex = 0;
+	char sendBuffer[8] {};
+	SetByte(sendBuffer, WIZ_ITEM_UPGRADE, sendIndex);
+	SetByte(sendBuffer, ITEM_UPGRADE_PROCESS, sendIndex);
+	SetByte(sendBuffer, resultCode, sendIndex);
+	Send(sendBuffer, sendIndex);
+}
+
 bool CUser::CheckCouponUsed() const
 {
 	// 이것은 기술지원 필요함 ㅠ.ㅠ
@@ -13442,7 +13934,7 @@ void CUser::GameStart(char* pBuf)
 		// NOTE: This behaviour is flipped as compared to official to give it a more meaningful name.
 		// bool bRecastSavedMagic = true;
 
-		_state = CONNECTION_STATE_GAMESTART;
+		SetState(CONNECTION_STATE_GAMESTART);
 
 		spdlog::debug(
 			"User::GameStart: in game [charId={} socketId={}]", m_pUserData->m_id, _socketId);
@@ -13633,6 +14125,18 @@ bool CUser::CheckMiddleStatueCapture() const
 		default:
 			return false;
 	}
+}
+
+float CUser::GetDistance2D(float targetX, float targetZ) const
+{
+	return sqrtf(GetDistanceSquared2D(targetX, targetZ));
+}
+
+float CUser::GetDistanceSquared2D(float targetX, float targetZ) const
+{
+	const float dx = m_pUserData->m_curx - targetX;
+	const float dz = m_pUserData->m_curz - targetZ;
+	return (dx * dx) + (dz * dz);
 }
 
 } // namespace Ebenezer

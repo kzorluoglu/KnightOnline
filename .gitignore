@@ -15,8 +15,6 @@ KnightOnline.VC.db
 *.sdf
 *.obj
 ipch/
-data/
-Client/*
 *.pch
 *.exe
 *.ilk

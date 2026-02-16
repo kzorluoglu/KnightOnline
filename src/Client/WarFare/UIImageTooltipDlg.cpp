@@ -9,6 +9,8 @@
 
 #include <N3Base/N3UIString.h>
 
+#include <cassert>
+
 class ItemTooltipTooLargeException : public std::runtime_error
 {
 public:
@@ -914,9 +916,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 		std::string szReduce;
 		if (spItem->pItemExt->siNeedStrength < 0)
 		{
-			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE_REVERSE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE_REVERSE)
+			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE)
 				szReduce = fmt::format_text_resource(IDS_TOOLTIP_REDUCE);
 		}
 
@@ -941,9 +941,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 		std::string szReduce;
 		if (spItem->pItemExt->siNeedStamina < 0)
 		{
-			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE_REVERSE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE_REVERSE)
+			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE)
 				szReduce = fmt::format_text_resource(IDS_TOOLTIP_REDUCE);
 		}
 
@@ -968,9 +966,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 		std::string szReduce;
 		if (spItem->pItemExt->siNeedDexterity < 0)
 		{
-			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE_REVERSE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE_REVERSE)
+			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE)
 				szReduce = fmt::format_text_resource(IDS_TOOLTIP_REDUCE);
 		}
 
@@ -995,9 +991,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 		std::string szReduce;
 		if (spItem->pItemExt->siNeedInteli < 0)
 		{
-			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE_REVERSE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE_REVERSE)
+			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE)
 				szReduce = fmt::format_text_resource(IDS_TOOLTIP_REDUCE);
 		}
 
@@ -1022,9 +1016,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 		std::string szReduce;
 		if (spItem->pItemExt->siNeedMagicAttack < 0)
 		{
-			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE_REVERSE
-				|| spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE_REVERSE)
+			if (spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UNIQUE || spItem->pItemExt->byMagicOrRare == ITEM_ATTRIB_UPGRADE)
 				szReduce = fmt::format_text_resource(IDS_TOOLTIP_REDUCE);
 		}
 
@@ -1070,7 +1062,7 @@ void CUIImageTooltipDlg::CalcTooltipStringNumAndWriteImpl(__IconItemSkill* spIte
 					}
 				}
 
-				_ASSERT(splitPos != std::string::npos);
+				assert(splitPos != std::string::npos);
 
 				m_pStr[iIndex]->SetColor(m_CWhite);
 				m_pstdstr[iIndex] = fmt::format("*{}", std::string_view(szRemark.data(), splitPos));

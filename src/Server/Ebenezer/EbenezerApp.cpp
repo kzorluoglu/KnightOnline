@@ -319,6 +319,13 @@ bool EbenezerApp::OnStart()
 		return false;
 	}
 
+	spdlog::info("EbenezerApp::OnInitDialog: loading ITEM_UPGRADE table");
+	if (!LoadItemUpgradeTable())
+	{
+		spdlog::error("EbenezerApp::OnInitDialog: failed to cache ITEM_UPGRADE table, closing");
+		return false;
+	}
+
 	spdlog::info("EbenezerApp::OnInitDialog: loading MAGIC table");
 	if (!LoadMagicTable())
 	{
@@ -765,9 +772,8 @@ void EbenezerApp::Send_FilterUnitRegion(
 
 		if (pUser != nullptr && pUser->GetState() == CONNECTION_STATE_GAMESTART)
 		{
-			double fDist = sqrt(pow((pUser->m_pUserData->m_curx - ref_x), 2)
-								+ pow((pUser->m_pUserData->m_curz - ref_z), 2));
-			if (fDist < 32)
+			float dist = pUser->GetDistance2D(ref_x, ref_z);
+			if (dist < 32)
 				pUser->RegionPacketAdd(pBuf, len);
 		}
 	}
@@ -969,6 +975,33 @@ bool EbenezerApp::LoadItemTable()
 		spdlog::error("EbenezerApp::LoadItemTable: load failed - {}", loader.GetError().Message);
 		return false;
 	}
+
+	return true;
+}
+
+bool EbenezerApp::LoadItemUpgradeTable()
+{
+	using ModelType = model::ItemUpgrade;
+
+	std::vector<ModelType*> localVec;
+	recordset_loader::Vector<model::ItemUpgrade> loader(localVec);
+	if (!loader.Load_ForbidEmpty())
+	{
+		spdlog::error(
+			"EbenezerApp::LoadItemUpgradeTable: load failed - {}", loader.GetError().Message);
+		return false;
+	}
+
+	// Ensure requirement items are sorted in descending order.
+	for (ModelType* model : localVec)
+	{
+		std::sort(std::begin(model->RequiredItem),
+			std::end(model->RequiredItem), //
+			[](int lhs, int rhs) { return lhs > rhs; });
+	}
+
+	// Now that we're done, swap it over to the destination container.
+	m_ItemUpgradeTableArray.swap(localVec);
 
 	return true;
 }

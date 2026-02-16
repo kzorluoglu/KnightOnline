@@ -18,6 +18,7 @@ class TcpSocketManager
 	friend class TcpSocket;
 	friend class TcpClientSocket;
 	friend class TcpServerSocket;
+	friend class TestApp;
 
 	using StartUserThreadCallback    = std::function<void()>;
 	using ShutdownUserThreadCallback = std::function<void()>;
@@ -89,6 +90,11 @@ protected:
 
 public:
 	virtual ~TcpSocketManager();
+
+protected:
+	void InitSockets(int socketCount);
+
+public:
 	void Init(int socketCount, uint32_t workerThreadCount = 0);
 
 protected:
