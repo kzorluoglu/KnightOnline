@@ -12,32 +12,6 @@ namespace Ebenezer
 {
 
 //////////////////// 직업별 Define ////////////////////
-inline constexpr int KARUWARRRIOR  = 101; // 카루전사
-inline constexpr int KARUROGUE     = 102; // 카루로그
-inline constexpr int KARUWIZARD    = 103; // 카루마법
-inline constexpr int KARUPRIEST    = 104; // 카루사제
-inline constexpr int BERSERKER     = 105; // 버서커
-inline constexpr int GUARDIAN      = 106; // 가디언
-inline constexpr int HUNTER        = 107; // 헌터
-inline constexpr int PENETRATOR    = 108; // 페너트레이터
-inline constexpr int SORSERER      = 109; // 소서러
-inline constexpr int NECROMANCER   = 110; // 네크로맨서
-inline constexpr int SHAMAN        = 111; // 샤만
-inline constexpr int DARKPRIEST    = 112; // 다크프리스트
-inline constexpr int ELMORWARRRIOR = 201; // 엘모전사
-inline constexpr int ELMOROGUE     = 202; // 엘모로그
-inline constexpr int ELMOWIZARD    = 203; // 엘모마법
-inline constexpr int ELMOPRIEST    = 204; // 엘모사제
-inline constexpr int BLADE         = 205; // 블레이드
-inline constexpr int PROTECTOR     = 206; // 프로텍터
-inline constexpr int RANGER        = 207; // 레인져
-inline constexpr int ASSASSIN      = 208; // 어쌔신
-inline constexpr int MAGE          = 209; // 메이지
-inline constexpr int ENCHANTER     = 210; // 엔첸터
-inline constexpr int CLERIC        = 211; // 클레릭
-inline constexpr int DRUID         = 212; // 드루이드
-/////////////////////////////////////////////////////
-
 /////////////////////////////////////////////////////
 // Race Define
 /////////////////////////////////////////////////////
@@ -313,22 +287,22 @@ struct _EXCHANGE_ITEM
 struct _PARTY_GROUP
 {
 	uint16_t wIndex;
-	int16_t uid[8]; // 하나의 파티에 8명까지 가입가능
-	int16_t sMaxHp[8];
-	int16_t sHp[8];
-	uint8_t bLevel[8];
-	int16_t sClass[8];
+	int16_t userSocketIds[MAX_PARTY_SIZE];
+	int16_t sMaxHp[MAX_PARTY_SIZE];
+	int16_t sHp[MAX_PARTY_SIZE];
+	uint8_t bLevel[MAX_PARTY_SIZE];
+	int16_t sClass[MAX_PARTY_SIZE];
 	uint8_t bItemRouting;
 
 	_PARTY_GROUP()
 	{
-		for (int i = 0; i < 8; i++)
+		for (int i = 0; i < MAX_PARTY_SIZE; i++)
 		{
-			uid[i]    = -1;
-			sMaxHp[i] = 0;
-			sHp[i]    = 0;
-			bLevel[i] = 0;
-			sClass[i] = 0;
+			userSocketIds[i] = -1;
+			sMaxHp[i]        = 0;
+			sHp[i]           = 0;
+			bLevel[i]        = 0;
+			sClass[i]        = 0;
 		}
 
 		wIndex       = 0;

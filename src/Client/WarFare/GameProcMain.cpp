@@ -3782,7 +3782,7 @@ bool CGameProcMain::MsgRecv_MyInfo_LevelChange(Packet& pkt)
 void CGameProcMain::MsgRecv_MyInfo_RealmPoint(Packet& pkt)
 {
 	uint8_t opcode = pkt.read<uint8_t>();
-	if (opcode == 1) // TODO: @Demircivi: LOYALTY_NATIONAL_POINTS is: 1, define it in header.
+	if (opcode == LOYALTY_CHANGE_NATIONAL)
 	{
 		// TODO: @Demircivi, implement missing
 
@@ -3814,7 +3814,7 @@ void CGameProcMain::MsgRecv_MyInfo_RealmPoint(Packet& pkt)
 				s_pPlayer->m_InfoExt.iRealmPoint, s_pPlayer->m_InfoExt.iRealmPointMonthly); // 국가 기여도는 10을 나누어서 표시
 		}
 	}
-	else if (opcode == 2)
+	else if (opcode == LOYALTY_CHANGE_MANNER)
 	{
 		// TODO: @Demircivi, after implementing Manner feature call its update method from here.
 		uint32_t iNewManner = pkt.read<uint32_t>(); // IDS_MANNER_CHANGE_GET / IDS_MANNER_CHANGE_LOST
@@ -5643,26 +5643,26 @@ void CGameProcMain::MsgRecv_MagicProcess(Packet& pkt)
 
 void CGameProcMain::MsgRecv_ClassChange(Packet& pkt) // 직업 변화..
 {
-	e_SubPacket_ClassChange eSP = (e_SubPacket_ClassChange) pkt.read<uint8_t>();
+	e_ClassChangeResult eSP = (e_ClassChangeResult) pkt.read<uint8_t>();
 
 	switch (eSP)
 	{
-		case N3_SP_CLASS_CHANGE_SUCCESS: // Success..
+		case CLASS_CHANGE_SUCCESS: // Success..
 			if (m_pUIClassChange != nullptr)
-				m_pUIClassChange->Open(N3_SP_CLASS_CHANGE_SUCCESS);
+				m_pUIClassChange->Open(CLASS_CHANGE_SUCCESS);
 			break;
 
-		case N3_SP_CLASS_CHANGE_NOT_YET: // Not Yet..
+		case CLASS_CHANGE_NOT_YET: // Not Yet..
 			if (m_pUIClassChange != nullptr)
-				m_pUIClassChange->Open(N3_SP_CLASS_CHANGE_NOT_YET);
+				m_pUIClassChange->Open(CLASS_CHANGE_NOT_YET);
 			break;
 
-		case N3_SP_CLASS_CHANGE_ALREADY: // Already..
+		case CLASS_CHANGE_ALREADY: // Already..
 			if (m_pUIClassChange != nullptr)
-				m_pUIClassChange->Open(N3_SP_CLASS_CHANGE_ALREADY);
+				m_pUIClassChange->Open(CLASS_CHANGE_ALREADY);
 			break;
 
-		case N3_SP_CLASS_CHANGE_FAILURE: // Failure..
+		case CLASS_CHANGE_FAILURE: // Failure..
 			if (m_pUIClassChange != nullptr)
 				m_pUIClassChange->RestorePrevClass();
 			break;
@@ -6567,27 +6567,27 @@ void CGameProcMain::MsgRecv_NpcChangeOpen(Packet& pkt) // Class Change와 초기
 
 	switch (bSubCom)
 	{
-		case N3_SP_CLASS_CHANGE_PURE:
+		case CLASS_CHANGE_STATUS_REQ:
 			m_pUINpcChange->Open();
 			break;
 
-		case N3_SP_CLASS_CHANGE_REQ:
+		case CLASS_CHANGE_RESULT:
 			MsgRecv_ClassChange(pkt);
 			break;
 
-		case N3_SP_CLASS_ALL_POINT:
+		case CLASS_RESET_STAT_REQ:
 			MsgRecv_AllPointInit(pkt);
 			break;
 
-		case N3_SP_CLASS_SKILL_POINT:
+		case CLASS_RESET_SKILL_REQ:
 			MsgRecv_SkillPointInit(pkt);
 			break;
 
-		case N3_SP_CLASS_POINT_CHANGE_PRICE_QUERY:
+		case CLASS_RESET_COST_REQ:
 			MsgRecv_PointChangePriceQueryRequest(pkt);
 			break;
 
-		case N3_SP_CLASS_PROMOTION:
+		case CLASS_PROMOTION_REQ:
 			MsgRecv_ClassPromotion(pkt);
 			break;
 

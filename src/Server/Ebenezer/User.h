@@ -16,6 +16,7 @@
 #include <shared-server/TcpServerSocket.h>
 
 #include <list>
+#include <span>
 
 namespace Ebenezer
 {
@@ -221,14 +222,13 @@ public:
 
 	uint32_t _sendValue                      = 0;
 	uint32_t _recvValue                      = 0;
-	//
 
-public:
+	int16_t m_sEventDiceRoll                 = 0;
+
 	CUser(test_tag);
 	CUser(TcpServerSocketManager* socketManager);
 	~CUser() override;
 
-public:
 	std::string_view GetImplName() const override;
 	void Initialize() override;
 	bool PullOutCore(char*& data, int& length) override;
@@ -284,19 +284,36 @@ public:
 	void RecvSelectMsg(char* pBuf);
 	void ResetSelectMsg();
 	bool GiveItem(int itemid, int16_t count);
-	bool RobItem(int itemid, int16_t count);
-	bool CheckExistItem(int itemid, int16_t count) const;
-	bool CheckExistItemAnd(int itemid1, int16_t count1, int itemid2, int16_t count2,
-		int itemid3, int16_t count3, int itemid4, int16_t count4, int itemid5, int16_t count5) const;
+
+	/// \brief Attempts to count number of itemId from the user
+	/// \return true when all items were successfully taken, false otherwise
+	bool RobItem(int itemId, int16_t count);
+
+	/// \brief Attempts to remove all the items from the user in the input array
+	/// \return true when all items were successfully taken, false otherwise
+	bool CheckAndRobItems(std::span<const ItemPair> items, int gold = 0);
+
+	/// \brief Checks to see if a user has count number of itemIds
+	/// \return true when the user has count number of itemIds, false otherwise
+	bool CheckExistItem(int itemId, int16_t count) const;
+
+	/// \brief Checks to see if a user has up to 5 sets of items
+	/// \return true when the user has all the items, false otherwise
+	bool CheckExistItemAnd(int id1, int16_t count1, int id2, int16_t count2, int id3 = -1,
+		int16_t count3 = -1, int id4 = -1, int16_t count4 = -1, int id5 = -1,
+		int16_t count5 = -1) const;
+
+	/// \brief Checks to see if a user has all the items in the input array
+	/// \return true when the user has all the items, false otherwise
+	bool CheckExistItemAnd(std::span<const ItemPair> items) const;
+
 	bool CheckWeight(int itemid, int16_t count) const;
 	bool CheckSkillPoint(uint8_t skillnum, uint8_t min, uint8_t max) const;
 	bool CheckSkillTotal(uint8_t min, uint8_t max) const;
 	bool CheckStatTotal(uint8_t min, uint8_t max) const;
-	bool CheckExistEvent(int16_t questId, uint8_t questState) const;
-	bool GoldLose(int gold);
-	void PromoteUser();
-	void PromoteUserNovice();
-	void GoldGain(int gold);
+	bool CheckExistEvent(e_QuestId questId, e_QuestState questState) const;
+	bool GoldLose(int amount);
+	void GoldGain(int amount);
 	void SendItemWeight();
 	void ItemLogToAgent(const char* srcid, const char* tarid, int type, int64_t serial, int itemid,
 		int count, int durability);
@@ -337,9 +354,31 @@ public:
 	void ZoneConCurrentUsers(char* pBuf);
 	void SelectWarpList(char* pBuf);
 	void GoldChange(int tid, int gold);
-	void AllSkillPointChange();
-	void AllPointChange();
-	void ClassChangeReq();
+
+	/// \brief Attempts to perform a skill point reset
+	/// \param isFree set to true to bypass cost calculation/charge
+	/// \originalName AllSkillPointChange
+	void SkillPointResetRequest(bool isFree = false);
+
+	/// \brief Sends an error response for a failed skill point reset
+	void SendResetSkillError(e_ClassChangeResult errorCode, int cost);
+
+	/// \brief Attempts to perform a stat point reset
+	/// \param isFree set to true to bypass cost calculation/charge
+	/// \originalName AllPointChange
+	void StatPointResetRequest(bool isFree = false);
+
+	/// \brief Sends an error response for a failed stat point reset
+	void SendResetStatError(e_ClassChangeResult errorCode, int cost);
+
+	/// \brief Sends novice promotion eligibility status
+	/// \originalName ClassChangeReq
+	void NovicePromotionStatusRequest();
+
+	/// \brief Sends a class change status req back to the client in response
+	/// to non-free Skill/Stat reset requests
+	void ClassChangeRespecReq();
+
 	void FriendReport(char* pBuf);
 	std::shared_ptr<CUser> GetItemRoutingUser(int itemid, int16_t itemcount);
 	bool GetStartPosition(int16_t* x, int16_t* z, int zoneId) const;
@@ -373,6 +412,17 @@ public:
 	void ChatTargetSelect(char* pBuf);
 	bool ItemEquipAvailable(const model::Item* pTable) const;
 	void ClassChange(char* pBuf);
+
+	/// \brief Issues the level 60 promotion quest
+	void GivePromotionQuest();
+
+	/// \brief Validates that the newClassId is valid promotion path from the current classId
+	/// \return true when the user's newClassId is a valid promotion path, false otherwise
+	bool ValidatePromotion(e_Class newClassId) const;
+
+	/// \brief Updates the user's class and broadcasts any required messages
+	void HandlePromotion(e_Class newClassId);
+
 	void MSpChange(int amount);
 	void UpdateGameWeather(char* pBuf, uint8_t type);
 	void ObjectEvent(char* pBuf);
@@ -396,7 +446,16 @@ public:
 	void UserLookChange(int pos, int itemid, int durability);
 	void SpeedHackUser();
 	void VersionCheck();
-	void LoyaltyChange(int tid);
+
+	/// \brief Processes any national point change associated with killing a target
+	void LoyaltyChange(int targetId);
+
+	/// \brief Changes national loyalty by a set amount.
+	void ChangeLoyalty(int loyaltyChange, bool isExcludeMonthly);
+
+	/// \brief Changes manner loyalty by a set amount.
+	void ChangeMannerPoint(int loyaltyChange);
+
 	void StateChange(char* pBuf);
 	void PointChange(char* pBuf);
 	void ZoneChange(int zone, float x, float z);
@@ -442,6 +501,16 @@ public:
 	void MoveProcess(char* pBuf);
 	void Rotate(char* pBuf);
 	void LoginProcess(char* pBuf);
+
+	/// \brief Attempts to perform a character's first job change
+	void PromoteUserNovice();
+
+	/// \brief Attempts to perform a character's second job change
+	void PromoteUser();
+
+	/// \brief Updates an event/quest status
+	/// \returns true if quest event was successfully saved, false otherwise
+	bool SaveEvent(e_QuestId questId, e_QuestState questState);
 };
 
 } // namespace Ebenezer

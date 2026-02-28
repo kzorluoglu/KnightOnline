@@ -10,7 +10,9 @@
 #include <shared/lzf.h>
 #include <shared/packets.h>
 #include <shared/StringUtils.h>
+
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/ranges.h>
 
 #include <unordered_set>
 
@@ -3238,7 +3240,8 @@ void CUser::SetSlotItemValue()
 
 		if (i == LEFTHAND)
 		{
-			if ((m_pUserData->m_sClass == BERSERKER || m_pUserData->m_sClass == BLADE))
+			if ((m_pUserData->m_sClass == CLASS_KA_BERSERKER
+					|| m_pUserData->m_sClass == CLASS_EL_BLADE))
 				//			m_sItemHit += item_hit * (double) (m_pUserData->m_bstrSkill[PRO_SKILL1] / 60.0);    // 성래씨 요청 ^^;
 				m_sItemHit += static_cast<int16_t>(item_hit * 0.5f);
 		}
@@ -5204,7 +5207,7 @@ void CUser::ItemTrade(char* pBuf)
 		}
 
 		int64_t buyPrice = static_cast<int64_t>(pTable->BuyPrice) * count;
-		if (buyPrice < 0 || buyPrice > MAX_GOLD)
+		if (buyPrice < MIN_CURRENCY || buyPrice > MAX_CURRENCY)
 		{
 			result = 3;
 			goto fail_return;
@@ -5235,10 +5238,10 @@ void CUser::ItemTrade(char* pBuf)
 			}
 		}
 
-		m_pUserData->m_sItemArray[SLOT_MAX + pos].nNum       = itemid;
-		m_pUserData->m_sItemArray[SLOT_MAX + pos].sDuration  = pTable->Durability;
+		m_pUserData->m_sItemArray[SLOT_MAX + pos].nNum      = itemid;
+		m_pUserData->m_sItemArray[SLOT_MAX + pos].sDuration = pTable->Durability;
 
-		m_pUserData->m_iGold                                -= static_cast<int>(buyPrice);
+		CurrencyChange(m_pUserData->m_iGold, -static_cast<int>(buyPrice));
 
 		// count 개념이 있는 아이템
 		if (pTable->Countable && count > 0)
@@ -5284,13 +5287,13 @@ void CUser::ItemTrade(char* pBuf)
 					salePrice /= 4;
 			}
 
-			if (salePrice < 0 || salePrice > MAX_GOLD)
+			if (salePrice < MIN_CURRENCY || salePrice > MAX_CURRENCY)
 			{
 				result = 3;
 				goto fail_return;
 			}
 
-			m_pUserData->m_iGold                             += static_cast<int>(salePrice);
+			CurrencyChange(m_pUserData->m_iGold, static_cast<int>(salePrice));
 
 			m_pUserData->m_sItemArray[SLOT_MAX + pos].sCount -= count;
 
@@ -5312,17 +5315,17 @@ void CUser::ItemTrade(char* pBuf)
 					salePrice /= 4;
 			}
 
-			if (salePrice < 0 || salePrice > MAX_GOLD)
+			if (salePrice < MIN_CURRENCY || salePrice > MAX_CURRENCY)
 			{
 				result = 3;
 				goto fail_return;
 			}
 
-			m_pUserData->m_iGold                                += static_cast<int>(salePrice);
+			CurrencyChange(m_pUserData->m_iGold, static_cast<int>(salePrice));
 
-			m_pUserData->m_sItemArray[SLOT_MAX + pos].nNum       = 0;
-			m_pUserData->m_sItemArray[SLOT_MAX + pos].sDuration  = 0;
-			m_pUserData->m_sItemArray[SLOT_MAX + pos].sCount     = 0;
+			m_pUserData->m_sItemArray[SLOT_MAX + pos].nNum      = 0;
+			m_pUserData->m_sItemArray[SLOT_MAX + pos].sDuration = 0;
+			m_pUserData->m_sItemArray[SLOT_MAX + pos].sCount    = 0;
 		}
 
 		SendItemWeight();
@@ -5593,7 +5596,7 @@ void CUser::ItemGet(char* pBuf)
 		{
 			if (m_sPartyIndex == -1)
 			{
-				m_pUserData->m_iGold += count;
+				CurrencyChange(m_pUserData->m_iGold, count);
 
 				SetByte(sendBuffer, WIZ_ITEM_GET, sendIndex);
 				SetByte(sendBuffer, 0x01, sendIndex);
@@ -5610,12 +5613,12 @@ void CUser::ItemGet(char* pBuf)
 					goto fail_return;
 
 				int usercount = 0, money = 0, levelsum = 0;
-				for (int i = 0; i < 8; i++)
+				for (int j = 0; j < MAX_PARTY_SIZE; j++)
 				{
-					if (pParty->uid[i] != -1)
+					if (pParty->userSocketIds[j] != -1)
 					{
 						usercount++;
-						levelsum += pParty->bLevel[i];
+						levelsum += pParty->bLevel[j];
 					}
 				}
 
@@ -5624,15 +5627,15 @@ void CUser::ItemGet(char* pBuf)
 
 				for (i = 0; i < 8; i++)
 				{
-					pUser = m_pMain->GetUserPtr(pParty->uid[i]);
+					pUser = m_pMain->GetUserPtr(pParty->userSocketIds[i]);
 					if (pUser == nullptr)
 						continue;
 
 					money = static_cast<int>(
 						count * (float) (pUser->m_pUserData->m_bLevel / (float) levelsum));
-					pUser->m_pUserData->m_iGold += money;
+					CurrencyChange(pUser->m_pUserData->m_iGold, money);
 
-					sendIndex                    = 0;
+					sendIndex = 0;
 					memset(sendBuffer, 0, sizeof(sendBuffer));
 					SetByte(sendBuffer, WIZ_ITEM_GET, sendIndex);
 					SetByte(sendBuffer, 0x02, sendIndex);
@@ -5730,13 +5733,13 @@ void CUser::StateChange(char* pBuf)
 	m_pMain->Send_Region(sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ);
 }
 
-void CUser::LoyaltyChange(int tid)
+void CUser::LoyaltyChange(int targetId)
 {
 	int16_t level_difference = 0, loyalty_source = 0, loyalty_target = 0;
 	int sendIndex = 0;
 	char sendBuffer[256] {};
 
-	auto pTUser = m_pMain->GetUserPtr(tid);
+	auto pTUser = m_pMain->GetUserPtr(targetId);
 
 	// Check if target exists.
 	if (pTUser == nullptr)
@@ -5793,15 +5796,8 @@ void CUser::LoyaltyChange(int tid)
 
 	//TRACE(_T("LoyaltyChange 222 - user1=%hs, %d,, user2=%hs, %d\n"), m_pUserData->m_id,  m_pUserData->m_iLoyalty, pTUser->m_pUserData->m_id, pTUser->m_pUserData->m_iLoyalty);
 
-	m_pUserData->m_iLoyalty         += loyalty_source; // Recalculations of Loyalty...
-	pTUser->m_pUserData->m_iLoyalty += loyalty_target;
-
-	// Cannot be less than zero.
-	if (m_pUserData->m_iLoyalty < 0)
-		m_pUserData->m_iLoyalty = 0;
-
-	if (pTUser->m_pUserData->m_iLoyalty < 0)
-		pTUser->m_pUserData->m_iLoyalty = 0;
+	CurrencyChange(m_pUserData->m_iLoyalty, loyalty_source);
+	CurrencyChange(pTUser->m_pUserData->m_iLoyalty, loyalty_target);
 
 	//TRACE(_T("LoyaltyChange 222 - user1=%hs, %d,, user2=%hs, %d\n"), m_pUserData->m_id,  m_pUserData->m_iLoyalty, pTUser->m_pUserData->m_id, pTUser->m_pUserData->m_iLoyalty);
 
@@ -5836,6 +5832,87 @@ void CUser::LoyaltyChange(int tid)
 		}
 	}
 	//
+}
+
+void CUser::ChangeLoyalty(const int loyaltyChange, const bool isExcludeMonthly)
+{
+	if (m_pUserData->m_bZone == ZONE_ARENA)
+	{
+		return;
+	}
+
+	CurrencyChange(m_pUserData->m_iLoyalty, loyaltyChange);
+	if (!isExcludeMonthly)
+		CurrencyChange(m_pUserData->m_iLoyaltyMonthly, loyaltyChange);
+
+	char sendBuff[256] {};
+	int sendIndex = 0;
+	SetByte(sendBuff, WIZ_LOYALTY_CHANGE, sendIndex);
+	SetByte(sendBuff, LOYALTY_CHANGE_NATIONAL, sendIndex);
+	SetInt(sendBuff, m_pUserData->m_iLoyalty, sendIndex);
+	SetInt(sendBuff, m_pUserData->m_iLoyaltyMonthly, sendIndex);
+	Send(sendBuff, sendIndex);
+}
+
+void CUser::ChangeMannerPoint(const int loyaltyAmount)
+{
+	static constexpr uint8_t MANNER_LEVEL_BAND_1    = 20;
+	static constexpr uint8_t MANNER_LEVEL_BAND_2    = 30;
+	static constexpr uint8_t MANNER_LEVEL_BAND_3    = 40;
+	static constexpr uint8_t MIN_MANNER_POINT_LEVEL = 35;
+	static constexpr float MANNER_POINT_RANGE       = 50;
+
+	if (loyaltyAmount > 0)
+	{
+		CurrencyChange(m_pUserData->m_iMannerPoint, loyaltyAmount);
+
+		char sendBuff[128] {};
+		int sendIndex = 0;
+		SetByte(sendBuff, WIZ_LOYALTY_CHANGE, sendIndex);
+		SetByte(sendBuff, LOYALTY_CHANGE_MANNER, sendIndex);
+		SetInt(sendBuff, m_pUserData->m_iMannerPoint, sendIndex);
+		Send(sendBuff, sendIndex);
+	}
+	else if (m_bIsChicken && m_sPartyIndex != -1)
+	{
+		_PARTY_GROUP* userParty = m_pMain->m_PartyMap.GetData(m_sPartyIndex);
+		if (userParty == nullptr)
+			return;
+
+		uint8_t partyPointChange = 0;
+		if (m_pUserData->m_bLevel <= MANNER_LEVEL_BAND_1)
+			partyPointChange = 1;
+		else if (m_pUserData->m_bLevel <= MANNER_LEVEL_BAND_2)
+			partyPointChange = 2;
+		else if (m_pUserData->m_bLevel <= MANNER_LEVEL_BAND_3)
+			partyPointChange = 3;
+
+		for (int i = 0; i < MAX_PARTY_SIZE; i++)
+		{
+			if (userParty->userSocketIds[i] < 0)
+				continue;
+
+			std::shared_ptr<CUser> partyMember = m_pMain->GetUserPtr(userParty->userSocketIds[i]);
+			if (partyMember == nullptr || partyMember->m_bResHpType == USER_DEAD
+				|| partyMember->m_bIsChicken
+				|| partyMember->m_pUserData->m_bLevel < MIN_MANNER_POINT_LEVEL)
+				continue;
+
+			float distance = GetDistance2D(
+				partyMember->m_pUserData->m_curx, partyMember->m_pUserData->m_curz);
+			if (distance > MANNER_POINT_RANGE)
+				continue;
+
+			CurrencyChange(partyMember->m_pUserData->m_iMannerPoint, partyPointChange);
+
+			char sendBuff[128] {};
+			int sendIndex = 0;
+			SetByte(sendBuff, WIZ_LOYALTY_CHANGE, sendIndex);
+			SetByte(sendBuff, LOYALTY_CHANGE_MANNER, sendIndex);
+			SetInt(sendBuff, m_pUserData->m_iMannerPoint, sendIndex);
+			Send(sendBuff, sendIndex);
+		}
+	}
 }
 
 void CUser::SpeedHackUser()
@@ -5982,7 +6059,7 @@ void CUser::PartyCancel()
 
 	m_sPartyIndex = -1;
 
-	leader_id     = pParty->uid[0];
+	leader_id     = pParty->userSocketIds[0];
 
 	auto pUser    = m_pMain->GetUserPtr(leader_id);
 	if (pUser == nullptr)
@@ -5991,7 +6068,7 @@ void CUser::PartyCancel()
 	// 파티 생성시 취소한거면..파티를 뽀개야쥐...
 	for (int i = 0; i < 8; i++)
 	{
-		if (pParty->uid[i] >= 0)
+		if (pParty->userSocketIds[i] >= 0)
 			count++;
 	}
 
@@ -6043,9 +6120,9 @@ void CUser::PartyRequest(int memberid, bool bCreate)
 		if (pParty == nullptr)
 			goto fail_return;
 
-		for (i = 0; i < 8; i++)
+		for (i = 0; i < MAX_PARTY_SIZE; i++)
 		{
-			if (pParty->uid[i] < 0)
+			if (pParty->userSocketIds[i] < 0)
 				break;
 		}
 
@@ -6060,12 +6137,12 @@ void CUser::PartyRequest(int memberid, bool bCreate)
 		if (m_sPartyIndex != -1)
 			goto fail_return;
 
-		pParty            = new _PARTY_GROUP;
-		pParty->uid[0]    = _socketId;
-		pParty->sMaxHp[0] = m_iMaxHp;
-		pParty->sHp[0]    = m_pUserData->m_sHp;
-		pParty->bLevel[0] = m_pUserData->m_bLevel;
-		pParty->sClass[0] = m_pUserData->m_sClass;
+		pParty                   = new _PARTY_GROUP;
+		pParty->userSocketIds[0] = _socketId;
+		pParty->sMaxHp[0]        = m_iMaxHp;
+		pParty->sHp[0]           = m_pUserData->m_sHp;
+		pParty->bLevel[0]        = m_pUserData->m_bLevel;
+		pParty->sClass[0]        = m_pUserData->m_sClass;
 
 		{
 			std::lock_guard<std::recursive_mutex> lock(g_region_mutex);
@@ -6091,7 +6168,7 @@ void CUser::PartyRequest(int memberid, bool bCreate)
 		SetByte(sendBuffer, AG_USER_PARTY, sendIndex);
 		SetByte(sendBuffer, PARTY_CREATE, sendIndex);
 		SetShort(sendBuffer, pParty->wIndex, sendIndex);
-		SetShort(sendBuffer, pParty->uid[0], sendIndex);
+		SetShort(sendBuffer, pParty->userSocketIds[0], sendIndex);
 		//SetShort( sendBuffer, pParty->sHp[0], sendIndex );
 		//SetByte( sendBuffer, pParty->bLevel[0], sendIndex );
 		//SetShort( sendBuffer, pParty->sClass[0], sendIndex );
@@ -6153,12 +6230,12 @@ void CUser::PartyInsert() // 본인이 추가 된다.  리더에게 패킷이 �
 	}
 
 	// Send your info to the rest of the party members.
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_PARTY_SIZE; i++)
 	{
-		if (pParty->uid[i] == _socketId)
+		if (pParty->userSocketIds[i] == _socketId)
 			continue;
 
-		auto pUser = m_pMain->GetUserPtr(pParty->uid[i]);
+		auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[i]);
 		if (pUser == nullptr)
 			continue;
 
@@ -6166,7 +6243,7 @@ void CUser::PartyInsert() // 본인이 추가 된다.  리더에게 패킷이 �
 		sendIndex = 0;
 		SetByte(sendBuffer, WIZ_PARTY, sendIndex);
 		SetByte(sendBuffer, PARTY_INSERT, sendIndex);
-		SetShort(sendBuffer, pParty->uid[i], sendIndex);
+		SetShort(sendBuffer, pParty->userSocketIds[i], sendIndex);
 		SetString2(sendBuffer, pUser->m_pUserData->m_id, sendIndex);
 		SetShort(sendBuffer, pParty->sMaxHp[i], sendIndex);
 		SetShort(sendBuffer, pParty->sHp[i], sendIndex);
@@ -6181,19 +6258,19 @@ void CUser::PartyInsert() // 본인이 추가 된다.  리더에게 패킷이 �
 	for (; i < 8; i++)
 	{
 		// Party Structure 에 추가
-		if (pParty->uid[i] != -1)
+		if (pParty->userSocketIds[i] != -1)
 			continue;
 
-		pParty->uid[i]    = _socketId;
-		pParty->sMaxHp[i] = m_iMaxHp;
-		pParty->sHp[i]    = m_pUserData->m_sHp;
-		pParty->bLevel[i] = m_pUserData->m_bLevel;
-		pParty->sClass[i] = m_pUserData->m_sClass;
+		pParty->userSocketIds[i] = _socketId;
+		pParty->sMaxHp[i]        = m_iMaxHp;
+		pParty->sHp[i]           = m_pUserData->m_sHp;
+		pParty->bLevel[i]        = m_pUserData->m_bLevel;
+		pParty->sClass[i]        = m_pUserData->m_sClass;
 		break;
 	}
 
 	// 파티 BBS를 위해 추가...	대장판!!!
-	auto pUser = m_pMain->GetUserPtr(pParty->uid[0]);
+	auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[0]);
 	if (pUser == nullptr)
 		return;
 
@@ -6248,7 +6325,7 @@ void CUser::PartyInsert() // 본인이 추가 된다.  리더에게 패킷이 �
 	SetByte(sendBuffer, PARTY_INSERT, sendIndex);
 	SetShort(sendBuffer, pParty->wIndex, sendIndex);
 	SetByte(sendBuffer, byIndex, sendIndex);
-	SetShort(sendBuffer, pParty->uid[byIndex], sendIndex);
+	SetShort(sendBuffer, pParty->userSocketIds[byIndex], sendIndex);
 	//SetShort( sendBuffer, pParty->sHp[byIndex], sendIndex );
 	//SetByte( sendBuffer, pParty->bLevel[byIndex], sendIndex );
 	//SetShort( sendBuffer, pParty->sClass[byIndex], sendIndex );
@@ -6278,13 +6355,13 @@ void CUser::PartyRemove(int memberid)
 	if (memberid != _socketId)
 	{
 		// 리더만 멤버 삭제 할수 있음..
-		if (pParty->uid[0] != _socketId)
+		if (pParty->userSocketIds[0] != _socketId)
 			return;
 	}
 	else
 	{
 		// 리더가 탈퇴하면 파티 깨짐
-		if (pParty->uid[0] == memberid)
+		if (pParty->userSocketIds[0] == memberid)
 		{
 			PartyDelete();
 			return;
@@ -6292,9 +6369,9 @@ void CUser::PartyRemove(int memberid)
 	}
 
 	int count = 0;
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_PARTY_SIZE; i++)
 	{
-		if (pParty->uid[i] != -1 && pParty->uid[i] != memberid)
+		if (pParty->userSocketIds[i] != -1 && pParty->userSocketIds[i] != memberid)
 			++count;
 	}
 
@@ -6314,15 +6391,15 @@ void CUser::PartyRemove(int memberid)
 	m_pMain->Send_PartyMember(m_sPartyIndex, sendBuffer, sendIndex);
 
 	// 파티가 유효한 경우 에는 파티 리스트에서 뺀다.
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_PARTY_SIZE; i++)
 	{
-		if (pParty->uid[i] != -1 && pParty->uid[i] == memberid)
+		if (pParty->userSocketIds[i] != -1 && pParty->userSocketIds[i] == memberid)
 		{
-			pParty->uid[i]       = -1;
-			pParty->sHp[i]       = 0;
-			pParty->bLevel[i]    = 0;
-			pParty->sClass[i]    = 0;
-			pUser->m_sPartyIndex = -1;
+			pParty->userSocketIds[i] = -1;
+			pParty->sHp[i]           = 0;
+			pParty->bLevel[i]        = 0;
+			pParty->sClass[i]        = 0;
+			pUser->m_sPartyIndex     = -1;
 		}
 	}
 
@@ -6348,9 +6425,9 @@ void CUser::PartyDelete()
 		return;
 	}
 
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_PARTY_SIZE; i++)
 	{
-		auto pUser = m_pMain->GetUserPtr(pParty->uid[i]);
+		auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[i]);
 		if (pUser != nullptr)
 			pUser->m_sPartyIndex = -1;
 	}
@@ -6533,14 +6610,14 @@ void CUser::ExchangeAdd(char* pBuf)
 			if (pExchangeItem->itemid == ITEM_GOLD)
 			{
 				pExchangeItem->count += count;
-				m_pUserData->m_iGold -= count;
-				bAdd                  = false;
+				CurrencyChange(m_pUserData->m_iGold, -count);
+				bAdd = false;
 				break;
 			}
 		}
 
 		if (bAdd)
-			m_pUserData->m_iGold -= count;
+			CurrencyChange(m_pUserData->m_iGold, -count);
 	}
 	else if (m_MirrorItem[pos].nNum == itemid)
 	{
@@ -6656,7 +6733,7 @@ void CUser::ExchangeDecide()
 				if (pExchangeItem->itemid == ITEM_GOLD)
 				{
 					// 돈만 백업
-					m_pUserData->m_iGold += pExchangeItem->count;
+					CurrencyChange(m_pUserData->m_iGold, pExchangeItem->count);
 					break;
 				}
 			}
@@ -6666,7 +6743,7 @@ void CUser::ExchangeDecide()
 				if (pExchangeItem->itemid == ITEM_GOLD)
 				{
 					// 돈만 백업
-					pUser->m_pUserData->m_iGold += pExchangeItem->count;
+					CurrencyChange(pUser->m_pUserData->m_iGold, pExchangeItem->count);
 					break;
 				}
 			}
@@ -6767,7 +6844,7 @@ void CUser::ExchangeCancel()
 		if (pExchangeItem->itemid == ITEM_GOLD)
 		{
 			// 돈만 백업
-			m_pUserData->m_iGold += pExchangeItem->count;
+			CurrencyChange(m_pUserData->m_iGold, pExchangeItem->count);
 			break;
 		}
 	}
@@ -6932,7 +7009,7 @@ int CUser::ExchangeDone()
 
 	// 상대방이 준 돈.
 	if (money > 0)
-		m_pUserData->m_iGold += money;
+		CurrencyChange(m_pUserData->m_iGold, money);
 
 	// 성공시 리스토어..
 	for (int i = 0; i < HAVE_MAX; i++)
@@ -7020,171 +7097,205 @@ void CUser::UpdateGameWeather(char* pBuf, uint8_t type)
 
 void CUser::ClassChange(char* pBuf)
 {
-	int index = 0, classcode = 0, sendIndex = 0, type = 0, sub_type = 0, money = 0;
-	char sendBuffer[128] {};
-	bool bSuccess = false;
-
-	type          = GetByte(pBuf, index);
-
-	// 전직요청
-	if (type == CLASS_CHANGE_REQ)
+	int index   = 0;
+	auto opcode = static_cast<e_ClassChangeOpcode>(GetByte(pBuf, index));
+	switch (opcode)
 	{
-		ClassChangeReq();
-		return;
-	}
+		// 전직요청
+		case CLASS_CHANGE_STATUS_REQ:
+			NovicePromotionStatusRequest();
+			break;
 
-	// 포인트 초기화
-	if (type == ALL_POINT_CHANGE)
-	{
-		AllPointChange();
-		return;
-	}
+		// 포인트 초기화
+		case CLASS_RESET_STAT_REQ:
+			StatPointResetRequest();
+			break;
 
-	// 스킬 초기화
-	if (type == ALL_SKILLPT_CHANGE)
-	{
-		AllSkillPointChange();
-		return;
-	}
+		// 스킬 초기화
+		case CLASS_RESET_SKILL_REQ:
+			SkillPointResetRequest();
+			break;
 
-	// 포인트 & 스킬 초기화에 돈이 얼마인지를 묻는 서브 패킷
-	if (type == CHANGE_MONEY_REQ)
-	{
-		sub_type = GetByte(pBuf, index);
+		// 포인트 & 스킬 초기화에 돈이 얼마인지를 묻는 서브 패킷
+		case CLASS_RESET_COST_REQ:
+		{
+			int sendIndex = 0, sub_type = 0, money = 0;
+			char sendBuffer[128] {};
 
-		money    = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
-		money    = (money / 100) * 100;
+			sub_type = GetByte(pBuf, index);
 
-		if (m_pUserData->m_bLevel < 30)
-			money = static_cast<int>(money * 0.4);
+			money    = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
+			money    = (money / 100) * 100;
+
+			if (m_pUserData->m_bLevel < 30)
+				money = static_cast<int>(money * 0.4);
 #if 0
-		else if (m_pUserData->m_bLevel >= 30
-			&& m_pUserData->m_bLevel < 60)
-			money = static_cast<int>(money * 1);
+			else if (m_pUserData->m_bLevel >= 30
+				&& m_pUserData->m_bLevel < 60)
+				money = static_cast<int>(money * 1);
 #endif
-		else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
-			money = static_cast<int>(money * 1.5);
+			else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
+				money = static_cast<int>(money * 1.5);
 
-		// 능력치 포인트
-		if (sub_type == 1)
-		{
-			// 할인시점이고 승리국이라면
-			if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+			// 능력치 포인트
+			if (sub_type == 1)
 			{
-				// old_money = money;
-				money = static_cast<int>(money * 0.5);
-				//TRACE(_T("^^ ClassChange -  point Discount ,, money=%d->%d\n"), old_money, money);
-			}
+				// 할인시점이고 승리국이라면
+				if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+				{
+					// old_money = money;
+					money = static_cast<int>(money * 0.5);
+					//TRACE(_T("^^ ClassChange -  point Discount ,, money=%d->%d\n"), old_money, money);
+				}
 
-			if (m_pMain->m_sDiscount == 2)
+				if (m_pMain->m_sDiscount == 2)
+				{
+					// old_money = money;
+					money = static_cast<int>(money * 0.5);
+				}
+
+				SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
+				SetByte(sendBuffer, CLASS_RESET_COST_REQ, sendIndex);
+				SetDWORD(sendBuffer, money, sendIndex);
+				Send(sendBuffer, sendIndex);
+			}
+			// skill 포인트
+			else if (sub_type == 2)
 			{
-				// old_money = money;
-				money = static_cast<int>(money * 0.5);
-			}
+				// 스킬은 한번 더
+				money = static_cast<int>(money * 1.5);
 
-			SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-			SetByte(sendBuffer, CHANGE_MONEY_REQ, sendIndex);
-			SetDWORD(sendBuffer, money, sendIndex);
-			Send(sendBuffer, sendIndex);
+				// 할인시점이고 승리국이라면
+				if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+				{
+					// old_money = money;
+					money = static_cast<int>(money * 0.5);
+					//TRACE(_T("^^ ClassChange -  skillpoint Discount ,, money=%d->%d\n"), old_money, money);
+				}
+
+				if (m_pMain->m_sDiscount == 2)
+				{
+					// old_money = money;
+					money = static_cast<int>(money * 0.5);
+				}
+
+				SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
+				SetByte(sendBuffer, CLASS_RESET_COST_REQ, sendIndex);
+				SetDWORD(sendBuffer, money, sendIndex);
+				Send(sendBuffer, sendIndex);
+			}
 		}
-		// skill 포인트
-		else if (sub_type == 2)
-		{
-			// 스킬은 한번 더
-			money = static_cast<int>(money * 1.5);
+		break;
 
-			// 할인시점이고 승리국이라면
-			if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
-			{
-				// old_money = money;
-				money = static_cast<int>(money * 0.5);
-				//TRACE(_T("^^ ClassChange -  skillpoint Discount ,, money=%d->%d\n"), old_money, money);
-			}
-
-			if (m_pMain->m_sDiscount == 2)
-			{
-				// old_money = money;
-				money = static_cast<int>(money * 0.5);
-			}
-
-			SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-			SetByte(sendBuffer, CHANGE_MONEY_REQ, sendIndex);
-			SetDWORD(sendBuffer, money, sendIndex);
-			Send(sendBuffer, sendIndex);
-		}
-
-		return;
+		default:
+			break;
 	}
+}
 
-	classcode = GetByte(pBuf, index);
-
+bool CUser::ValidatePromotion(e_Class newClassId) const
+{
 	switch (m_pUserData->m_sClass)
 	{
-		case KARUWARRRIOR:
-			if (classcode == BERSERKER || classcode == GUARDIAN)
-				bSuccess = true;
+		case CLASS_KA_WARRIOR:
+			if (newClassId == CLASS_KA_BERSERKER)
+				return true;
 			break;
 
-		case KARUROGUE:
-			if (classcode == HUNTER || classcode == PENETRATOR)
-				bSuccess = true;
+		case CLASS_KA_BERSERKER:
+			if (newClassId == CLASS_KA_GUARDIAN)
+				return true;
 			break;
 
-		case KARUWIZARD:
-			if (classcode == SORSERER || classcode == NECROMANCER)
-				bSuccess = true;
+		case CLASS_KA_ROGUE:
+			if (newClassId == CLASS_KA_HUNTER)
+				return true;
 			break;
 
-		case KARUPRIEST:
-			if (classcode == SHAMAN || classcode == DARKPRIEST)
-				bSuccess = true;
+		case CLASS_KA_HUNTER:
+			if (newClassId == CLASS_KA_PENETRATOR)
+				return true;
 			break;
 
-		case ELMORWARRRIOR:
-			if (classcode == BLADE || classcode == PROTECTOR)
-				bSuccess = true;
+		case CLASS_KA_WIZARD:
+			if (newClassId == CLASS_KA_SORCERER)
+				return true;
 			break;
 
-		case ELMOROGUE:
-			if (classcode == RANGER || classcode == ASSASSIN)
-				bSuccess = true;
+		case CLASS_KA_SORCERER:
+			if (newClassId == CLASS_KA_NECROMANCER)
+				return true;
 			break;
 
-		case ELMOWIZARD:
-			if (classcode == MAGE || classcode == ENCHANTER)
-				bSuccess = true;
+		case CLASS_KA_PRIEST:
+			if (newClassId == CLASS_KA_SHAMAN)
+				return true;
 			break;
 
-		case ELMOPRIEST:
-			if (classcode == CLERIC || classcode == DRUID)
-				bSuccess = true;
+		case CLASS_KA_SHAMAN:
+			if (newClassId == CLASS_KA_DARKPRIEST)
+				return true;
+			break;
+
+		case CLASS_EL_WARRIOR:
+			if (newClassId == CLASS_EL_BLADE)
+				return true;
+			break;
+
+		case CLASS_EL_BLADE:
+			if (newClassId == CLASS_EL_PROTECTOR)
+				return true;
+			break;
+
+		case CLASS_EL_ROGUE:
+			if (newClassId == CLASS_EL_RANGER)
+				return true;
+			break;
+
+		case CLASS_EL_RANGER:
+			if (newClassId == CLASS_EL_ASSASSIN)
+				return true;
+			break;
+
+		case CLASS_EL_WIZARD:
+			if (newClassId == CLASS_EL_MAGE)
+				return true;
+			break;
+
+		case CLASS_EL_MAGE:
+			if (newClassId == CLASS_EL_ENCHANTER)
+				return true;
+			break;
+
+		case CLASS_EL_PRIEST:
+			if (newClassId == CLASS_EL_CLERIC)
+				return true;
+			break;
+
+		case CLASS_EL_CLERIC:
+			if (newClassId == CLASS_EL_DRUID)
+				return true;
 			break;
 
 		default:
 			break;
 	}
 
-	memset(sendBuffer, 0, sizeof(sendBuffer));
-	sendIndex = 0;
-	if (!bSuccess)
-	{
-		SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-		SetByte(sendBuffer, CLASS_CHANGE_RESULT, sendIndex);
-		SetByte(sendBuffer, 0, sendIndex);
-		Send(sendBuffer, sendIndex);
-	}
-	else
-	{
-		m_pUserData->m_sClass = classcode;
+	return false;
+}
 
-		if (m_sPartyIndex != -1)
-		{
-			SetByte(sendBuffer, WIZ_PARTY, sendIndex);
-			SetByte(sendBuffer, PARTY_CLASSCHANGE, sendIndex);
-			SetShort(sendBuffer, _socketId, sendIndex);
-			SetShort(sendBuffer, m_pUserData->m_sClass, sendIndex);
-			m_pMain->Send_PartyMember(m_sPartyIndex, sendBuffer, sendIndex);
-		}
+void CUser::HandlePromotion(e_Class newClassId)
+{
+	m_pUserData->m_sClass = newClassId;
+
+	if (m_sPartyIndex != -1)
+	{
+		char sendBuffer[128] {};
+		int sendIndex = 0;
+		SetByte(sendBuffer, WIZ_PARTY, sendIndex);
+		SetByte(sendBuffer, PARTY_CLASSCHANGE, sendIndex);
+		SetShort(sendBuffer, _socketId, sendIndex);
+		SetShort(sendBuffer, m_pUserData->m_sClass, sendIndex);
+		m_pMain->Send_PartyMember(m_sPartyIndex, sendBuffer, sendIndex);
 	}
 }
 
@@ -7315,9 +7426,9 @@ void CUser::LoyaltyDivide(int tid)
 		return;
 
 	// Get total level and number of members in party.
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < MAX_PARTY_SIZE; i++)
 	{
-		if (pParty->uid[i] != -1)
+		if (pParty->userSocketIds[i] != -1)
 		{
 			levelsum += pParty->bLevel[i];
 			++total_member;
@@ -7389,19 +7500,15 @@ void CUser::LoyaltyDivide(int tid)
 		individualvalue = -1000;
 
 		// Distribute loyalty amongst party members.
-		for (int j = 0; j < 8; j++)
+		for (int j = 0; j < MAX_PARTY_SIZE; j++)
 		{
-			auto pUser = m_pMain->GetUserPtr(pParty->uid[j]);
+			auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[j]);
 			if (pUser == nullptr)
 				continue;
 
 			//TRACE(_T("LoyaltyDivide 111 - user1=%hs, %d\n"), pUser->m_pUserData->m_id, pUser->m_pUserData->m_iLoyalty);
 
-			pUser->m_pUserData->m_iLoyalty += individualvalue;
-
-			// Cannot be less than zero.
-			if (pUser->m_pUserData->m_iLoyalty < 0)
-				pUser->m_pUserData->m_iLoyalty = 0;
+			CurrencyChange(pUser->m_pUserData->m_iLoyalty, individualvalue);
 
 			//TRACE(_T("LoyaltyDivide 222 - user1=%hs, %d\n"), pUser->m_pUserData->m_id, pUser->m_pUserData->m_iLoyalty);
 
@@ -7419,18 +7526,15 @@ void CUser::LoyaltyDivide(int tid)
 		loyalty_source = 2 * loyalty_source;
 
 	// Distribute loyalty amongst party members.
-	for (int j = 0; j < 8; j++)
+	for (int j = 0; j < MAX_PARTY_SIZE; j++)
 	{
-		auto pUser = m_pMain->GetUserPtr(pParty->uid[j]);
+		auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[j]);
 		if (pUser == nullptr)
 			continue;
 
 		//TRACE(_T("LoyaltyDivide 333 - user1=%hs, %d\n"), pUser->m_pUserData->m_id, pUser->m_pUserData->m_iLoyalty);
-		individualvalue                 = pUser->m_pUserData->m_bLevel * loyalty_source / levelsum;
-		pUser->m_pUserData->m_iLoyalty += individualvalue;
-
-		if (pUser->m_pUserData->m_iLoyalty < 0)
-			pUser->m_pUserData->m_iLoyalty = 0;
+		individualvalue = pUser->m_pUserData->m_bLevel * loyalty_source / levelsum;
+		CurrencyChange(pUser->m_pUserData->m_iLoyalty, individualvalue);
 
 		//TRACE(_T("LoyaltyDivide 444 - user1=%hs, %d\n"), pUser->m_pUserData->m_id, pUser->m_pUserData->m_iLoyalty);
 
@@ -7441,10 +7545,7 @@ void CUser::LoyaltyDivide(int tid)
 		pUser->Send(sendBuffer, sendIndex);
 	}
 
-	pTUser->m_pUserData->m_iLoyalty += loyalty_target; // Recalculate target loyalty.
-
-	if (pTUser->m_pUserData->m_iLoyalty < 0)
-		pTUser->m_pUserData->m_iLoyalty = 0;
+	CurrencyChange(pTUser->m_pUserData->m_iLoyalty, loyalty_target); // Recalculate target loyalty.
 
 	//TRACE(_T("LoyaltyDivide 555 - user1=%hs, %d\n"), pTUser->m_pUserData->m_id, pTUser->m_pUserData->m_iLoyalty);
 
@@ -7980,7 +8081,7 @@ void CUser::ItemRepair(char* pBuf)
 	if (money > m_pUserData->m_iGold)
 		goto fail_return;
 
-	m_pUserData->m_iGold -= money;
+	CurrencyChange(m_pUserData->m_iGold, -money);
 	if (pos == 1)
 		m_pUserData->m_sItemArray[slot].sDuration = durability;
 	else if (pos == 2)
@@ -8589,8 +8690,8 @@ void CUser::WarehouseProcess(char* pBuf)
 				if ((m_pUserData->m_iGold - count) < 0)
 					goto fail_return;
 
-				m_pUserData->m_iBank += count;
-				m_pUserData->m_iGold -= count;
+				CurrencyChange(m_pUserData->m_iBank, count);
+				CurrencyChange(m_pUserData->m_iGold, -count);
 				break;
 			}
 
@@ -8660,8 +8761,8 @@ void CUser::WarehouseProcess(char* pBuf)
 				if ((m_pUserData->m_iBank - count) < 0)
 					goto fail_return;
 
-				m_pUserData->m_iGold += count;
-				m_pUserData->m_iBank -= count;
+				CurrencyChange(m_pUserData->m_iGold, count);
+				CurrencyChange(m_pUserData->m_iBank, -count);
 				break;
 			}
 
@@ -8873,7 +8974,7 @@ int CUser::GetNumberOfEmptySlots() const
 	return emptySlotCount;
 }
 
-bool CUser::CheckExistEvent(int16_t questId, uint8_t questState) const
+bool CUser::CheckExistEvent(e_QuestId questId, e_QuestState questState) const
 {
 	for (const _USER_QUEST& quest : m_pUserData->m_quests)
 	{
@@ -9001,9 +9102,9 @@ std::shared_ptr<CUser> CUser::GetItemRoutingUser(int itemid, int16_t /*itemcount
 	if (pTable == nullptr)
 		return nullptr;
 
-	while (count < 8)
+	while (count < MAX_PARTY_SIZE)
 	{
-		int select_user = pParty->uid[pParty->bItemRouting];
+		int select_user = pParty->userSocketIds[pParty->bItemRouting];
 		auto pUser      = m_pMain->GetUserPtr(select_user);
 		if (pUser != nullptr)
 		{
@@ -9108,7 +9209,7 @@ void CUser::FriendReport(char* pBuf)
 	Send(sendBuffer, sendIndex);
 }
 
-void CUser::ClassChangeReq()
+void CUser::NovicePromotionStatusRequest()
 {
 	int sendIndex = 0;
 	char sendBuffer[128] {};
@@ -9116,76 +9217,132 @@ void CUser::ClassChangeReq()
 	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
 	SetByte(sendBuffer, CLASS_CHANGE_RESULT, sendIndex);
 
+	uint8_t result = CLASS_CHANGE_SUCCESS;
 	if (m_pUserData->m_bLevel < 10)
-	{
-		SetByte(sendBuffer, 2, sendIndex);
-	}
+		result = CLASS_CHANGE_NOT_YET;
 	else if ((m_pUserData->m_sClass % 100) > 4)
-	{
-		SetByte(sendBuffer, 3, sendIndex);
-	}
-	else
-	{
-		SetByte(sendBuffer, 1, sendIndex);
-	}
+		result = CLASS_CHANGE_ALREADY;
 
+	SetByte(sendBuffer, result, sendIndex);
 	Send(sendBuffer, sendIndex);
+
+	spdlog::debug("User::NovicePromotionStatusRequest: Check triggered [charId={} level={} "
+				  "class={} status={}]",
+		m_pUserData->m_id, m_pUserData->m_bLevel, m_pUserData->m_sClass, result);
 }
 
-void CUser::AllSkillPointChange()
+void CUser::ClassChangeRespecReq()
+{
+	char sendBuff[128] = {};
+	int sendIndex      = 0;
+	SetByte(sendBuff, WIZ_CLASS_CHANGE, sendIndex);
+	SetByte(sendBuff, CLASS_CHANGE_STATUS_REQ, sendIndex);
+	Send(sendBuff, sendIndex);
+}
+
+void CUser::GivePromotionQuest()
+{
+	switch (m_pUserData->m_sClass)
+	{
+		case CLASS_EL_BLADE:
+		case CLASS_KA_BERSERKER:
+			SendSay(6020, 6020, 6002, 6011);
+			if (CheckExistEvent(QUEST_MASTER_WARRIOR, QUEST_STATE_NOT_STARTED))
+				SaveEvent(QUEST_MASTER_WARRIOR, QUEST_STATE_IN_PROGRESS);
+			break;
+
+		case CLASS_KA_HUNTER:
+		case CLASS_EL_RANGER:
+			SendSay(6012, 6012, 7002, 7011);
+			if (CheckExistEvent(QUEST_MASTER_ROGUE, QUEST_STATE_NOT_STARTED))
+				SaveEvent(QUEST_MASTER_ROGUE, QUEST_STATE_IN_PROGRESS);
+			break;
+
+		case CLASS_KA_SORCERER:
+		case CLASS_EL_MAGE:
+			SendSay(6014, 6014, 8002, 8011);
+			if (CheckExistEvent(QUEST_MASTER_MAGE, QUEST_STATE_NOT_STARTED))
+				SaveEvent(QUEST_MASTER_MAGE, QUEST_STATE_IN_PROGRESS);
+			break;
+
+		case CLASS_KA_SHAMAN:
+		case CLASS_EL_CLERIC:
+			SendSay(6020, 6020, 9002, 9011);
+			if (CheckExistEvent(QUEST_MASTER_PRIEST, QUEST_STATE_NOT_STARTED))
+				SaveEvent(QUEST_MASTER_PRIEST, QUEST_STATE_IN_PROGRESS);
+			break;
+
+		default:
+			break;
+	}
+}
+
+void CUser::SkillPointResetRequest(bool isFree)
 {
 	// 돈을 먼저 깍고.. 만약,, 돈이 부족하면.. 에러...
-	int sendIndex = 0, skill_point = 0, money = 0, i = 0, j = 0, temp_value = 0;
-	uint8_t type = 0; // 0:돈이 부족, 1:성공, 2:초기화할 스킬이 없을때..
+	int sendIndex = 0, skillPointsSpent = 0, i = 0, j = 0, respecCost = 0;
 	char sendBuffer[128] {};
 
-	temp_value = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
-	temp_value = (temp_value / 100) * 100;
+	if (!isFree)
+	{
+		respecCost = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
+		respecCost = (respecCost / 100) * 100;
 
-	if (m_pUserData->m_bLevel < 30)
-		temp_value = static_cast<int>(temp_value * 0.4);
+		if (m_pUserData->m_bLevel < 30)
+			respecCost = static_cast<int>(respecCost * 0.4);
 #if 0
-	else if (m_pUserData->m_bLevel >= 30
-		&& m_pUserData->m_bLevel < 60)
-		temp_value = temp_value * 1;
+		else if (m_pUserData->m_bLevel >= 30
+			&& m_pUserData->m_bLevel < 60)
+			respecCost = respecCost * 1;
 #endif
-	else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
-		temp_value = static_cast<int>(temp_value * 1.5);
+		else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
+			respecCost = static_cast<int>(respecCost * 1.5);
 
-	// 스킬은 한번 더
-	temp_value = static_cast<int>(temp_value * 1.5);
+		// 스킬은 한번 더
+		respecCost = static_cast<int>(respecCost * 1.5);
 
-	// 할인시점이고 승리국이라면
-	if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
-	{
-		// old_money = temp_value;
-		temp_value = static_cast<int>(temp_value * 0.5);
-		//TRACE(_T("^^ AllSkillPointChange - Discount ,, money=%d->%d\n"), old_money, temp_value);
+		// 할인시점이고 승리국이라면
+		if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+		{
+			// old_money = temp_value;
+			respecCost = static_cast<int>(respecCost * 0.5);
+		}
+
+		if (m_pMain->m_sDiscount == 2)
+		{
+			// old_money = temp_value;
+			respecCost = static_cast<int>(respecCost * 0.5);
+		}
 	}
-
-	if (m_pMain->m_sDiscount == 2)
-	{
-		// old_money = temp_value;
-		temp_value = static_cast<int>(temp_value * 0.5);
-		//TRACE(_T("^^ AllSkillPointChange - Discount ,, money=%d->%d\n"), old_money, temp_value);
-	}
-
-	money = m_pUserData->m_iGold - temp_value;
-	//money = m_pUserData->m_iGold - 100;
-
-	if (money < 0)
-		goto fail_return;
 
 	if (m_pUserData->m_bLevel < 10)
-		goto fail_return;
+	{
+		spdlog::debug("User::SkillPointResetRequest: failed, below min level "
+					  "[charId={} level={}]",
+			m_pUserData->m_id, m_pUserData->m_bLevel);
+		SendResetSkillError(CLASS_CHANGE_FAILURE, respecCost);
+		return;
+	}
 
 	for (i = 1; i < 9; i++)
-		skill_point += m_pUserData->m_bstrSkill[i];
+		skillPointsSpent += m_pUserData->m_bstrSkill[i];
 
-	if (skill_point <= 0)
+	if (skillPointsSpent <= 0)
 	{
-		type = 2;
-		goto fail_return;
+		spdlog::debug("User::SkillPointResetRequest: failed due to lack of spent skill points "
+					  "[charId={} skillPointsSpent={} level={}]",
+			m_pUserData->m_id, skillPointsSpent, m_pUserData->m_bLevel);
+		SendResetSkillError(CLASS_CHANGE_NOT_YET, respecCost);
+		return;
+	}
+
+	if (respecCost > 0 && !GoldLose(respecCost))
+	{
+		spdlog::debug("User::SkillPointResetRequest: failed, not enough gold "
+					  "[charId={} goldExpected={} goldActual={} level={}]",
+			m_pUserData->m_id, respecCost, m_pUserData->m_iGold, m_pUserData->m_bLevel);
+		SendResetSkillError(CLASS_CHANGE_FAILURE, respecCost);
+		return;
 	}
 
 	// 문제될 소지가 많음 : 가용스킬이 255을 넘는 상황이 발생할 확율이 높음..
@@ -9193,69 +9350,77 @@ void CUser::AllSkillPointChange()
 	m_pUserData->m_bstrSkill[0] = (m_pUserData->m_bLevel - 9) * 2;
 	for (j = 1; j < 9; j++)
 		m_pUserData->m_bstrSkill[j] = 0;
-	m_pUserData->m_iGold = money;
-	type                 = 1;
 
 	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-	SetByte(sendBuffer, ALL_SKILLPT_CHANGE, sendIndex);
-	SetByte(sendBuffer, type, sendIndex);
+	SetByte(sendBuffer, CLASS_RESET_SKILL_REQ, sendIndex);
+	SetByte(sendBuffer, CLASS_CHANGE_SUCCESS, sendIndex);
 	SetDWORD(sendBuffer, m_pUserData->m_iGold, sendIndex);
 	SetByte(sendBuffer, m_pUserData->m_bstrSkill[0], sendIndex);
 	Send(sendBuffer, sendIndex);
-	return;
 
-fail_return:
+	spdlog::debug("User::SkillPointResetRequest: completed successfully "
+				  "[charId={} goldSpent={} level={}]",
+		m_pUserData->m_id, respecCost, m_pUserData->m_bLevel);
+}
+
+void CUser::SendResetSkillError(e_ClassChangeResult errorCode, int cost)
+{
+	int sendIndex = 0;
+	char sendBuffer[32] {};
 	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-	SetByte(sendBuffer, ALL_SKILLPT_CHANGE, sendIndex);
-	SetByte(sendBuffer, type, sendIndex);
-	SetDWORD(sendBuffer, temp_value, sendIndex);
+	SetByte(sendBuffer, CLASS_RESET_SKILL_REQ, sendIndex);
+	SetByte(sendBuffer, errorCode, sendIndex);
+	SetDWORD(sendBuffer, cost, sendIndex);
 	Send(sendBuffer, sendIndex);
 }
 
-void CUser::AllPointChange()
+void CUser::StatPointResetRequest(bool isFree)
 {
 	// 돈을 먼저 깍고.. 만약,, 돈이 부족하면.. 에러...
-	int sendIndex = 0, money = 0, temp_money = 0;
-	uint8_t type = 0;
+	int sendIndex = 0, respecCost = 0;
 	char sendBuffer[128] {};
-	int i = 0;
 
-	if (m_pUserData->m_bLevel > 80)
-		goto fail_return;
-
-	temp_money = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
-	temp_money = (temp_money / 100) * 100;
-	if (m_pUserData->m_bLevel < 30)
-		temp_money = static_cast<int>(temp_money * 0.4);
-#if 0
-	else if (m_pUserData->m_bLevel >= 30
-		&& m_pUserData->m_bLevel < 60)
-		temp_money = static_cast<int>(temp_money * 1);
-#endif
-	else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
-		temp_money = static_cast<int>(temp_money * 1.5);
-
-	// 할인시점이고 승리국이라면
-	if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+	if (m_pUserData->m_bLevel > MAX_LEVEL)
 	{
-		temp_money = static_cast<int>(temp_money * 0.5);
-		//TRACE(_T("^^ AllPointChange - Discount ,, money=%d->%d\n"), old_money, temp_money);
+		spdlog::debug("User::StatPointResetRequest: failed, user level exceeds cap "
+					  "[charId={} level={}]",
+			m_pUserData->m_id, m_pUserData->m_bLevel);
+		SendResetStatError(CLASS_CHANGE_FAILURE, respecCost);
+		return;
 	}
 
-	if (m_pMain->m_sDiscount == 2)
-		temp_money = static_cast<int>(temp_money * 0.5);
+	if (!isFree)
+	{
+		respecCost = static_cast<int>(pow((m_pUserData->m_bLevel * 2), 3.4));
+		respecCost = (respecCost / 100) * 100;
+		if (m_pUserData->m_bLevel < 30)
+			respecCost = static_cast<int>(respecCost * 0.4);
+#if 0
+		else if (m_pUserData->m_bLevel >= 30
+			&& m_pUserData->m_bLevel < 60)
+			respecCost = static_cast<int>(respecCost * 1);
+#endif
+		else if (m_pUserData->m_bLevel >= 60 && m_pUserData->m_bLevel <= 90)
+			respecCost = static_cast<int>(respecCost * 1.5);
 
-	money = m_pUserData->m_iGold - temp_money;
-	if (money < 0)
-		goto fail_return;
+		// 할인시점이고 승리국이라면
+		if (m_pMain->m_sDiscount == 1 && m_pMain->m_byOldVictory == m_pUserData->m_bNation)
+			respecCost = static_cast<int>(respecCost * 0.5);
 
-	// 장착아이템이 하나라도 있으면 에러처리
-	for (i = 0; i < SLOT_MAX; i++)
+		if (m_pMain->m_sDiscount == 2)
+			respecCost = static_cast<int>(respecCost * 0.5);
+	}
+
+	// Ensure user has no items equipped
+	for (int i = 0; i < SLOT_MAX; i++)
 	{
 		if (m_pUserData->m_sItemArray[i].nNum != 0)
 		{
-			type = 0x04;
-			goto fail_return;
+			spdlog::debug("User::StatPointResetRequest: failed, user has items equipped "
+						  "[charId={} level={}]",
+				m_pUserData->m_id, m_pUserData->m_bLevel);
+			SendResetStatError(CLASS_CHANGE_ITEM_IN_SLOT, respecCost);
+			return;
 		}
 	}
 
@@ -9266,8 +9431,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 65 && m_pUserData->m_bSta == 65 && m_pUserData->m_bDex == 60
 				&& m_pUserData->m_bIntel == 50 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 65;
@@ -9281,8 +9449,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 50 && m_pUserData->m_bSta == 50 && m_pUserData->m_bDex == 70
 				&& m_pUserData->m_bIntel == 70 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 50;
@@ -9296,8 +9467,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 50 && m_pUserData->m_bSta == 60 && m_pUserData->m_bDex == 60
 				&& m_pUserData->m_bIntel == 70 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 50;
@@ -9311,8 +9485,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 65 && m_pUserData->m_bSta == 65 && m_pUserData->m_bDex == 60
 				&& m_pUserData->m_bIntel == 50 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 65;
@@ -9326,8 +9503,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 60 && m_pUserData->m_bSta == 60 && m_pUserData->m_bDex == 70
 				&& m_pUserData->m_bIntel == 50 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 60;
@@ -9341,8 +9521,11 @@ void CUser::AllPointChange()
 			if (m_pUserData->m_bStr == 50 && m_pUserData->m_bSta == 50 && m_pUserData->m_bDex == 70
 				&& m_pUserData->m_bIntel == 70 && m_pUserData->m_bCha == 50)
 			{
-				type = 2;
-				goto fail_return;
+				spdlog::debug("User::StatPointResetRequest: failed, no stat points to refund "
+							  "[charId={} level={}]",
+					m_pUserData->m_id, m_pUserData->m_bLevel);
+				SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+				return;
 			}
 
 			m_pUserData->m_bStr   = 50;
@@ -9354,22 +9537,29 @@ void CUser::AllPointChange()
 
 		default:
 			spdlog::error(
-				"User::AllPointChange: Unhandled race {} [accountName={} characterName={}]",
+				"User::StatPointResetRequest: Unhandled race {} [accountName={} characterName={}]",
 				m_pUserData->m_bRace, m_strAccountID, m_pUserData->m_id);
-			type = 2;
-			goto fail_return;
+			SendResetStatError(CLASS_CHANGE_NOT_YET, respecCost);
+			return;
+	}
+
+	if (respecCost > 0 && !GoldLose(respecCost))
+	{
+		spdlog::debug("User::StatPointResetRequest: failed, not enough gold "
+					  "[charId={} goldExpected={} goldActual={} level={}]",
+			m_pUserData->m_id, respecCost, m_pUserData->m_iGold, m_pUserData->m_bLevel);
+		SendResetStatError(CLASS_CHANGE_FAILURE, respecCost);
+		return;
 	}
 
 	m_pUserData->m_bPoints = (m_pUserData->m_bLevel - 1) * 3 + 10;
-	m_pUserData->m_iGold   = money;
 
 	SetUserAbility();
 	Send2AI_UserUpdateInfo();
 
-	type = 1;
 	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-	SetByte(sendBuffer, ALL_POINT_CHANGE, sendIndex);
-	SetByte(sendBuffer, type, sendIndex);
+	SetByte(sendBuffer, CLASS_RESET_STAT_REQ, sendIndex);
+	SetByte(sendBuffer, CLASS_CHANGE_SUCCESS, sendIndex);
 	SetDWORD(sendBuffer, m_pUserData->m_iGold, sendIndex);
 	SetShort(sendBuffer, m_pUserData->m_bStr, sendIndex);
 	SetShort(sendBuffer, m_pUserData->m_bSta, sendIndex);
@@ -9383,11 +9573,19 @@ void CUser::AllPointChange()
 	SetShort(sendBuffer, m_pUserData->m_bPoints, sendIndex);
 	Send(sendBuffer, sendIndex);
 
-fail_return:
+	spdlog::debug("User::StatPointResetRequest: completed successfully "
+				  "[charId={} goldSpent={} level={}]",
+		m_pUserData->m_id, respecCost, m_pUserData->m_bLevel);
+}
+
+void CUser::SendResetStatError(e_ClassChangeResult errorCode, int cost)
+{
+	int sendIndex = 0;
+	char sendBuffer[32] {};
 	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
-	SetByte(sendBuffer, ALL_POINT_CHANGE, sendIndex);
-	SetByte(sendBuffer, type, sendIndex);
-	SetDWORD(sendBuffer, temp_money, sendIndex);
+	SetByte(sendBuffer, CLASS_RESET_STAT_REQ, sendIndex);
+	SetByte(sendBuffer, errorCode, sendIndex);
+	SetDWORD(sendBuffer, cost, sendIndex);
 	Send(sendBuffer, sendIndex);
 }
 
@@ -9419,14 +9617,14 @@ void CUser::GoldChange(int tid, int gold)
 		// Source is NOT in a party.
 		if (m_sPartyIndex == -1)
 		{
-			s_type                        = GOLD_CHANGE_GAIN;
-			t_type                        = GOLD_CHANGE_LOSE;
+			s_type      = GOLD_CHANGE_GAIN;
+			t_type      = GOLD_CHANGE_LOSE;
 
-			s_temp_gold                   = (pTUser->m_pUserData->m_iGold * 4) / 10;
-			t_temp_gold                   = pTUser->m_pUserData->m_iGold / 2;
+			s_temp_gold = (pTUser->m_pUserData->m_iGold * 4) / 10;
+			t_temp_gold = pTUser->m_pUserData->m_iGold / 2;
 
-			m_pUserData->m_iGold         += s_temp_gold;
-			pTUser->m_pUserData->m_iGold -= t_temp_gold;
+			CurrencyChange(m_pUserData->m_iGold, s_temp_gold);
+			CurrencyChange(pTUser->m_pUserData->m_iGold, -t_temp_gold);
 		}
 		// When the source is in a party.
 		else
@@ -9436,12 +9634,12 @@ void CUser::GoldChange(int tid, int gold)
 				return;
 
 			// s_type                     = GOLD_CHANGE_GAIN;
-			t_type                        = GOLD_CHANGE_LOSE;
+			t_type      = GOLD_CHANGE_LOSE;
 
-			s_temp_gold                   = (pTUser->m_pUserData->m_iGold * 4) / 10;
-			t_temp_gold                   = pTUser->m_pUserData->m_iGold / 2;
+			s_temp_gold = (pTUser->m_pUserData->m_iGold * 4) / 10;
+			t_temp_gold = pTUser->m_pUserData->m_iGold / 2;
 
-			pTUser->m_pUserData->m_iGold -= t_temp_gold;
+			CurrencyChange(pTUser->m_pUserData->m_iGold, -t_temp_gold);
 
 			SetByte(sendBuffer, WIZ_GOLD_CHANGE, sendIndex); // First the victim...
 			SetByte(sendBuffer, t_type, sendIndex);
@@ -9453,9 +9651,9 @@ void CUser::GoldChange(int tid, int gold)
 			int usercount = 0, money = 0, levelsum = 0, count = 0;
 			count = s_temp_gold;
 
-			for (int i = 0; i < 8; i++)
+			for (int i = 0; i < MAX_PARTY_SIZE; i++)
 			{
-				if (pParty->uid[i] != -1)
+				if (pParty->userSocketIds[i] != -1)
 				{
 					usercount++;
 					levelsum += pParty->bLevel[i];
@@ -9465,18 +9663,18 @@ void CUser::GoldChange(int tid, int gold)
 			if (usercount == 0)
 				return;
 
-			for (int i = 0; i < 8; i++)
+			for (int i = 0; i < MAX_PARTY_SIZE; i++)
 			{
-				auto pUser = m_pMain->GetUserPtr(pParty->uid[i]);
+				auto pUser = m_pMain->GetUserPtr(pParty->userSocketIds[i]);
 				if (pUser == nullptr)
 					continue;
 
 				money = static_cast<int>(
 					count * (float) (pUser->m_pUserData->m_bLevel / (float) levelsum));
-				pUser->m_pUserData->m_iGold += money;
+				CurrencyChange(pUser->m_pUserData->m_iGold, money);
 
 				// Now the party members...
-				sendIndex                    = 0;
+				sendIndex = 0;
 				memset(sendBuffer, 0, sizeof(sendBuffer));
 				SetByte(sendBuffer, WIZ_GOLD_CHANGE, sendIndex);
 				SetByte(sendBuffer, GOLD_CHANGE_GAIN, sendIndex);
@@ -9494,26 +9692,26 @@ void CUser::GoldChange(int tid, int gold)
 		// Source gains money.
 		if (gold > 0)
 		{
-			s_type                        = GOLD_CHANGE_GAIN;
-			t_type                        = GOLD_CHANGE_LOSE;
+			s_type      = GOLD_CHANGE_GAIN;
+			t_type      = GOLD_CHANGE_LOSE;
 
-			s_temp_gold                   = gold;
-			t_temp_gold                   = gold;
+			s_temp_gold = gold;
+			t_temp_gold = gold;
 
-			m_pUserData->m_iGold         += s_temp_gold;
-			pTUser->m_pUserData->m_iGold -= t_temp_gold;
+			CurrencyChange(m_pUserData->m_iGold, s_temp_gold);
+			CurrencyChange(pTUser->m_pUserData->m_iGold, -t_temp_gold);
 		}
 		// Source loses money.
 		else
 		{
-			s_type                        = GOLD_CHANGE_LOSE;
-			t_type                        = GOLD_CHANGE_GAIN;
+			s_type      = GOLD_CHANGE_LOSE;
+			t_type      = GOLD_CHANGE_GAIN;
 
-			s_temp_gold                   = gold;
-			t_temp_gold                   = gold;
+			s_temp_gold = gold;
+			t_temp_gold = gold;
 
-			m_pUserData->m_iGold         -= s_temp_gold;
-			pTUser->m_pUserData->m_iGold += t_temp_gold;
+			CurrencyChange(m_pUserData->m_iGold, -s_temp_gold);
+			CurrencyChange(pTUser->m_pUserData->m_iGold, t_temp_gold);
 		}
 	}
 
@@ -10571,12 +10769,12 @@ void CUser::MarketBBSRegister(char* pBuf)
 
 	if (buysell_index == MARKET_BBS_BUY)
 	{
-		m_pUserData->m_iGold -= BUY_POST_PRICE;
+		CurrencyChange(m_pUserData->m_iGold, -BUY_POST_PRICE);
 		SetDWORD(sendBuffer, BUY_POST_PRICE, sendIndex);
 	}
 	else if (buysell_index == MARKET_BBS_SELL)
 	{
-		m_pUserData->m_iGold -= SELL_POST_PRICE;
+		CurrencyChange(m_pUserData->m_iGold, -SELL_POST_PRICE);
 		SetDWORD(sendBuffer, SELL_POST_PRICE, sendIndex);
 	}
 
@@ -10870,7 +11068,7 @@ void CUser::MarketBBSRemotePurchase(char* pBuf)
 	// Check if user has gold.
 	if (m_pUserData->m_iGold >= REMOTE_PURCHASE_PRICE)
 	{
-		m_pUserData->m_iGold -= REMOTE_PURCHASE_PRICE;
+		CurrencyChange(m_pUserData->m_iGold, -REMOTE_PURCHASE_PRICE);
 
 		SetByte(sendBuffer, WIZ_GOLD_CHANGE, sendIndex);
 		SetByte(sendBuffer, GOLD_CHANGE_LOSE, sendIndex);
@@ -10923,8 +11121,8 @@ void CUser::MarketBBSTimeCheck()
 			{
 				if (pUser->m_pUserData->m_iGold >= BUY_POST_PRICE)
 				{
-					pUser->m_pUserData->m_iGold -= BUY_POST_PRICE;
-					m_pMain->m_fBuyStartTime[i]  = TimeGet();
+					CurrencyChange(pUser->m_pUserData->m_iGold, -BUY_POST_PRICE);
+					m_pMain->m_fBuyStartTime[i] = TimeGet();
 
 					// Now the target
 					memset(sendBuffer, 0, sizeof(sendBuffer));
@@ -10956,8 +11154,8 @@ void CUser::MarketBBSTimeCheck()
 			{
 				if (pUser->m_pUserData->m_iGold >= SELL_POST_PRICE)
 				{
-					pUser->m_pUserData->m_iGold  -= SELL_POST_PRICE;
-					m_pMain->m_fSellStartTime[i]  = TimeGet();
+					CurrencyChange(pUser->m_pUserData->m_iGold, -SELL_POST_PRICE);
+					m_pMain->m_fSellStartTime[i] = TimeGet();
 
 					// Now the target
 					memset(sendBuffer, 0, sizeof(sendBuffer));
@@ -11530,6 +11728,14 @@ void CUser::ClientEvent(char* pBuf)
 	if (pEventData == nullptr)
 		return;
 
+	if (!pEventData->_unhandledOpcodes.empty())
+	{
+		spdlog::error("User::ClientEvent: failed to run event {} due to unhandled opcodes. "
+					  "[characterName={} unhandledOpcodes={}]",
+			eventid, m_pUserData->m_id, pEventData->_unhandledOpcodes);
+		return;
+	}
+
 	// Check if all 'A's meet the requirements in Event #1
 	if (!CheckEventLogic(pEventData))
 		return;
@@ -11554,6 +11760,7 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 		if (pLE == nullptr)
 			return false;
 
+		// Case order is based on order set in official .IDB
 		switch (pLE->m_LogicElse)
 		{
 			case LOGIC_CHECK_UNDER_WEIGHT:
@@ -11572,23 +11779,8 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 					bExact = true;
 				break;
 
-			case LOGIC_CHECK_SKILL_TOTAL:
-				if (CheckSkillTotal(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_STAT_TOTAL:
-				if (CheckStatTotal(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
-					bExact = true;
-				break;
-
 			case LOGIC_CHECK_EXIST_ITEM:
 				if (CheckExistItem(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_NOEXIST_ITEM:
-				if (!CheckExistItem(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
 					bExact = true;
 				break;
 
@@ -11599,18 +11791,11 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 					bExact = true;
 				break;
 
-			case LOGIC_CHECK_NOCLASS:
-				if (!CheckClass(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1],
-						pLE->m_LogicElseInt[2], pLE->m_LogicElseInt[3], pLE->m_LogicElseInt[4],
-						pLE->m_LogicElseInt[5]))
-					bExact = true;
-				break;
-
 			case LOGIC_CHECK_WEIGHT:
 				if (!CheckWeight(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
 					bExact = true;
 				break;
-				// 비러머글 복권 >.<
+
 			case LOGIC_CHECK_EDITBOX:
 				if (!CheckEditBox())
 					bExact = true;
@@ -11620,8 +11805,13 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 				if (CheckRandom(pLE->m_LogicElseInt[0]))
 					bExact = true;
 				break;
-				//
-				// 비러머글 엑셀 >.<
+
+			case LOGIC_HOWMUCH_ITEM:
+				if (CheckItemCount(
+						pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1], pLE->m_LogicElseInt[2]))
+					bExact = true;
+				break;
+
 			case LOGIC_CHECK_LV:
 				if (m_pUserData->m_bLevel >= pLE->m_LogicElseInt[0]
 					&& m_pUserData->m_bLevel <= pLE->m_LogicElseInt[1])
@@ -11638,12 +11828,6 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 					bExact = true;
 				break;
 
-			case LOGIC_HOWMUCH_ITEM:
-				if (CheckItemCount(
-						pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1], pLE->m_LogicElseInt[2]))
-					bExact = true;
-				break;
-
 			case LOGIC_CHECK_NOAH:
 				if (m_pUserData->m_iGold >= pLE->m_LogicElseInt[0]
 					&& m_pUserData->m_iGold <= pLE->m_LogicElseInt[1])
@@ -11652,6 +11836,40 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 
 			case LOGIC_CHECK_NATION:
 				if (m_pUserData->m_bNation == pLE->m_LogicElseInt[0])
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_EXIST_EVENT:
+				if (CheckExistEvent(static_cast<e_QuestId>(pLE->m_LogicElseInt[0]),
+						static_cast<e_QuestState>(pLE->m_LogicElseInt[1])))
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_NOEXIST_EVENT:
+				if (!CheckExistEvent(static_cast<e_QuestId>(pLE->m_LogicElseInt[0]),
+						static_cast<e_QuestState>(pLE->m_LogicElseInt[1])))
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_PROMOTION_ELIGIBLE:
+				if (CheckPromotionEligible())
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_NOEXIST_ITEM:
+				if (!CheckExistItem(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_ITEMCHANGE_NUM:
+				if (m_byLastExchangeNum == pLE->m_LogicElseInt[0])
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_NOCLASS:
+				if (!CheckClass(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1],
+						pLE->m_LogicElseInt[2], pLE->m_LogicElseInt[3], pLE->m_LogicElseInt[4],
+						pLE->m_LogicElseInt[5]))
 					bExact = true;
 				break;
 
@@ -11676,28 +11894,13 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 					bExact = true;
 				break;
 
-			case LOGIC_CHECK_MIDDLE_STATUE_CAPTURE:
-				if (CheckMiddleStatueCapture())
-				{
-					// NOTE: officially this returns true, ending check processing immediately
+			case LOGIC_CHECK_KNIGHT:
+				if (CheckKnight())
 					bExact = true;
-				}
 				break;
 
-			case LOGIC_CHECK_MIDDLE_STATUE_NOCAPTURE:
-				if (!CheckMiddleStatueCapture())
-				{
-					// NOTE: officially this returns true, ending check processing immediately
-					bExact = true;
-				}
-				break;
-
-			case LOGIC_CHECK_EMPTY_SLOT:
-				if (GetNumberOfEmptySlots() >= pLE->m_LogicElseInt[0])
-				{
-					// NOTE: officially this returns true, ending check processing immediately
-					bExact = true;
-				}
+			case LOGIC_CHECK_DICE:
+				bExact = pLE->m_LogicElseInt[0] == m_sEventDiceRoll;
 				break;
 
 			case LOGIC_CHECK_MONSTER_CHALLENGE_TIME:
@@ -11709,35 +11912,8 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 				}
 				break;
 
-			case LOGIC_CHECK_EXIST_EVENT:
-				if (CheckExistEvent(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_NOEXIST_EVENT:
-				if (!CheckExistEvent(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_ITEMCHANGE_NUM:
-				if (m_byLastExchangeNum == pLE->m_LogicElseInt[0])
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_KNIGHT:
-				if (CheckKnight())
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_PROMOTION_ELIGIBLE:
-				if (CheckPromotionEligible())
-					bExact = true;
-				break;
-
-			case LOGIC_CHECK_NO_CASTLE:
-				if (m_pUserData->m_bKnights != m_pMain->m_KnightsSiegeWar._masterKnights
-					|| m_pMain->m_KnightsSiegeWar._masterKnights == 0
-					|| m_pUserData->m_bFame != KNIGHTS_DUTY_CHIEF)
+			case LOGIC_CHECK_MONSTER_CHALLENGE_USERCOUNT:
+				if (m_pMain->_monsterChallengePlayerCount > pLE->m_LogicElseInt[0])
 				{
 					// NOTE: officially this returns true, ending check processing immediately
 					bExact = true;
@@ -11754,8 +11930,44 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 				}
 				break;
 
-			case LOGIC_CHECK_MONSTER_CHALLENGE_USERCOUNT:
-				if (m_pMain->_monsterChallengePlayerCount > pLE->m_LogicElseInt[0])
+			case LOGIC_CHECK_NO_CASTLE:
+				if (m_pUserData->m_bKnights != m_pMain->m_KnightsSiegeWar._masterKnights
+					|| m_pMain->m_KnightsSiegeWar._masterKnights == 0
+					|| m_pUserData->m_bFame != KNIGHTS_DUTY_CHIEF)
+				{
+					// NOTE: officially this returns true, ending check processing immediately
+					bExact = true;
+				}
+				break;
+
+			case LOGIC_CHECK_SKILL_TOTAL:
+				if (CheckSkillTotal(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_STAT_TOTAL:
+				if (CheckStatTotal(pLE->m_LogicElseInt[0], pLE->m_LogicElseInt[1]))
+					bExact = true;
+				break;
+
+			case LOGIC_CHECK_EMPTY_SLOT:
+				if (GetNumberOfEmptySlots() >= pLE->m_LogicElseInt[0])
+				{
+					// NOTE: officially this returns true, ending check processing immediately
+					bExact = true;
+				}
+				break;
+
+			case LOGIC_CHECK_MIDDLE_STATUE_CAPTURE:
+				if (CheckMiddleStatueCapture())
+				{
+					// NOTE: officially this returns true, ending check processing immediately
+					bExact = true;
+				}
+				break;
+
+			case LOGIC_CHECK_MIDDLE_STATUE_NOCAPTURE:
+				if (!CheckMiddleStatueCapture())
 				{
 					// NOTE: officially this returns true, ending check processing immediately
 					bExact = true;
@@ -11825,14 +12037,22 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 				if (pEvent == nullptr)
 					break;
 
-				EVENT_DATA* pEventData = pEvent->m_arEvent.GetData(pExec->m_ExecInt[0]);
-				if (pEventData == nullptr)
+				EVENT_DATA* childEventData = pEvent->m_arEvent.GetData(pExec->m_ExecInt[0]);
+				if (childEventData == nullptr)
 					break;
 
-				if (!CheckEventLogic(pEventData))
+				if (!childEventData->_unhandledOpcodes.empty())
+				{
+					spdlog::error("User::RunEvent: failed to run event {} due to unhandled "
+								  "opcodes. [characterName={} unhandledOpcodes={}]",
+						pExec->m_ExecInt[0], m_pUserData->m_id, childEventData->_unhandledOpcodes);
+					return false;
+				}
+
+				if (!CheckEventLogic(childEventData))
 					break;
 
-				if (!RunEvent(pEventData))
+				if (!RunEvent(childEventData))
 					return false;
 			}
 			break;
@@ -11873,21 +12093,63 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 				GoldLose(pExec->m_ExecInt[0]);
 				break;
 
-			case EXEC_ZONE_CHANGE:
-				ZoneChange(pExec->m_ExecInt[0], static_cast<float>(pExec->m_ExecInt[1]),
-					static_cast<float>(pExec->m_ExecInt[2]));
+			case EXEC_RETURN:
+				return false;
+
+			case EXEC_SAVE_EVENT:
+				SaveEvent(static_cast<e_QuestId>(pExec->m_ExecInt[0]),
+					static_cast<e_QuestState>(pExec->m_ExecInt[1]));
 				break;
 
 			case EXEC_PROMOTE_USER:
 				PromoteUser();
 				break;
 
+			case EXEC_GIVE_PROMOTION_QUEST:
+				GivePromotionQuest();
+				break;
+
+			case EXEC_ZONE_CHANGE:
+				ZoneChange(pExec->m_ExecInt[0], static_cast<float>(pExec->m_ExecInt[1]),
+					static_cast<float>(pExec->m_ExecInt[2]));
+				break;
+
 			case EXEC_PROMOTE_USER_NOVICE:
 				PromoteUserNovice();
 				break;
 
-			case EXEC_RETURN:
-				return false;
+			case EXEC_SKILL_POINT_DISTRIBUTE:
+			case EXEC_STAT_POINT_DISTRIBUTE:
+				ClassChangeRespecReq();
+				break;
+
+			case EXEC_LEVEL_UP:
+				ExpChange(m_iMaxExp);
+				break;
+
+			case EXEC_EXP_CHANGE:
+				ExpChange(pExec->m_ExecInt[0]);
+				break;
+
+			case EXEC_ROLL_DICE:
+				m_sEventDiceRoll = myrand(1, pExec->m_ExecInt[0]);
+				break;
+
+			case EXEC_CHANGE_LOYALTY:
+				ChangeLoyalty(pExec->m_ExecInt[0], true);
+				break;
+
+			case EXEC_SKILL_POINT_FREE:
+				SkillPointResetRequest(true);
+				break;
+
+			case EXEC_STAT_POINT_FREE:
+				StatPointResetRequest(true);
+				break;
+
+			case EXEC_CHANGE_MANNER:
+				ChangeMannerPoint(pExec->m_ExecInt[0]);
+				break;
 
 			default:
 				spdlog::warn("User::RunEvent: unhandled opcode. opcode={:02X} zoneId={}",
@@ -11935,10 +12197,9 @@ void CUser::SendItemWeight()
 	Send(sendBuffer, sendIndex);
 }
 
-void CUser::GoldGain(int gold)
+void CUser::GoldGain(int amount)
 {
-	int sendIndex      = 0;
-	int64_t iTotalGold = 0;
+	int sendIndex = 0;
 	char sendBuffer[256] {};
 
 	if (m_pUserData->m_iGold < 0)
@@ -11948,25 +12209,19 @@ void CUser::GoldGain(int gold)
 		return;
 	}
 
-	if (gold < 0)
-		gold = 0;
+	if (amount < MIN_CURRENCY)
+		amount = MIN_CURRENCY;
 
-	iTotalGold = static_cast<int64_t>(m_pUserData->m_iGold) + static_cast<int64_t>(gold);
-
-	if (iTotalGold > MAX_GOLD)
-		iTotalGold = MAX_GOLD;
-
-	// set user gold as iTotalGold
-	m_pUserData->m_iGold = static_cast<int>(iTotalGold);
+	CurrencyChange(m_pUserData->m_iGold, amount);
 
 	SetByte(sendBuffer, WIZ_GOLD_CHANGE, sendIndex);
 	SetByte(sendBuffer, GOLD_CHANGE_GAIN, sendIndex);
-	SetDWORD(sendBuffer, gold, sendIndex);
+	SetDWORD(sendBuffer, amount, sendIndex);
 	SetDWORD(sendBuffer, m_pUserData->m_iGold, sendIndex);
 	Send(sendBuffer, sendIndex);
 }
 
-bool CUser::GoldLose(int gold)
+bool CUser::GoldLose(int amount)
 {
 	int sendIndex = 0;
 	char sendBuffer[256] {};
@@ -11978,18 +12233,18 @@ bool CUser::GoldLose(int gold)
 		return false;
 	}
 
-	if (gold < 0)
-		gold = 0;
+	if (amount < MIN_CURRENCY)
+		amount = MIN_CURRENCY;
 
 	// Insufficient gold!
-	if (m_pUserData->m_iGold < gold)
+	if (m_pUserData->m_iGold < amount)
 		return false;
 
-	m_pUserData->m_iGold -= gold; // Subtract gold.
+	CurrencyChange(m_pUserData->m_iGold, -amount);
 
 	SetByte(sendBuffer, WIZ_GOLD_CHANGE, sendIndex);
 	SetByte(sendBuffer, GOLD_CHANGE_LOSE, sendIndex);
-	SetDWORD(sendBuffer, gold, sendIndex);
+	SetDWORD(sendBuffer, amount, sendIndex);
 	SetDWORD(sendBuffer, m_pUserData->m_iGold, sendIndex);
 	Send(sendBuffer, sendIndex);
 
@@ -12062,17 +12317,17 @@ bool CUser::CheckWeight(int itemid, int16_t count) const
 	return false;
 }
 
-bool CUser::CheckExistItem(int itemid, int16_t count) const
+bool CUser::CheckExistItem(int itemId, int16_t count) const
 {
 	// This checks if such an item exists.
-	model::Item* pTable = m_pMain->m_ItemTableMap.GetData(itemid);
+	model::Item* pTable = m_pMain->m_ItemTableMap.GetData(itemId);
 	if (pTable == nullptr)
 		return false;
 
 	// Check every slot in this case.....
 	for (int i = 0; i < SLOT_MAX + HAVE_MAX; i++)
 	{
-		if (m_pUserData->m_sItemArray[i].nNum != itemid)
+		if (m_pUserData->m_sItemArray[i].nNum != itemId)
 			continue;
 
 		// Non-countable item. Automatically return true
@@ -12089,49 +12344,44 @@ bool CUser::CheckExistItem(int itemid, int16_t count) const
 	return false;
 }
 
-bool CUser::CheckExistItemAnd(int itemid1, int16_t count1, int itemid2, int16_t count2,
-	int itemid3, int16_t count3, int itemid4, int16_t count4, int itemid5, int16_t count5) const
+bool CUser::CheckExistItemAnd(int id1, int16_t count1, int id2, int16_t count2, int id3,
+	int16_t count3, int id4, int16_t count4, int id5, int16_t count5) const
 {
-	struct Requirement
+	const ItemPair items[5] { { id1, count1 }, { id2, count2 }, { id3, count3 }, { id4, count4 },
+		{ id5, count5 } };
+	return CheckExistItemAnd(items);
+}
+
+bool CUser::CheckExistItemAnd(const std::span<const ItemPair> items) const
+{
+	for (const ItemPair& item : items)
 	{
-		int id;
-		int16_t count;
-	};
-
-	const Requirement requirements[] = {
-		{ itemid1, count1 },
-		{ itemid2, count2 },
-		{ itemid3, count3 },
-		{ itemid4, count4 },
-		{ itemid5, count5 },
-	};
-
-	for (const Requirement& requirement : requirements)
-	{
-		if (requirement.id <= 0 || requirement.count < 0)
-			continue;
-
-		if (!CheckExistItem(requirement.id, requirement.count))
+		if (item.ItemId != -1 && !CheckExistItem(item.ItemId, item.Count))
+		{
+			spdlog::debug(
+				"User::CheckExistItemAnd: User missing items [charId={} itemId={} count={}]",
+				m_pUserData->m_id, item.ItemId, item.Count);
 			return false;
+		}
 	}
 
 	return true;
 }
 
-bool CUser::RobItem(int itemid, int16_t count)
+bool CUser::RobItem(int itemId, int16_t count)
 {
 	int sendIndex = 0;
 	char sendBuffer[256] {};
 
 	// This checks if such an item exists.
-	model::Item* pTable = m_pMain->m_ItemTableMap.GetData(itemid);
+	model::Item* pTable = m_pMain->m_ItemTableMap.GetData(itemId);
 	if (pTable == nullptr)
 		return false;
 
 	int i = SLOT_MAX;
 	for (; i < SLOT_MAX + HAVE_MAX; i++)
 	{
-		if (m_pUserData->m_sItemArray[i].nNum != itemid)
+		if (m_pUserData->m_sItemArray[i].nNum != itemId)
 			continue;
 
 		// Remove item from inventory (Non-countable items)
@@ -12168,9 +12418,58 @@ bool CUser::RobItem(int itemid, int16_t count)
 	SetShort(sendBuffer, 1, sendIndex);      // The number of for-loops
 	SetByte(sendBuffer, 1, sendIndex);
 	SetByte(sendBuffer, i - SLOT_MAX, sendIndex);
-	SetDWORD(sendBuffer, itemid, sendIndex); // The ID of item.
+	SetDWORD(sendBuffer, itemId, sendIndex); // The ID of item.
 	SetDWORD(sendBuffer, m_pUserData->m_sItemArray[i].sCount, sendIndex);
 	Send(sendBuffer, sendIndex);
+	return true;
+}
+
+bool CUser::CheckAndRobItems(const std::span<const ItemPair> items, const int gold)
+{
+	// Check that all items are available before attempting to take anything
+	if (!CheckExistItemAnd(items))
+		return false;
+
+	// check and take gold next
+	if (gold > 0 && !GoldLose(gold))
+	{
+		spdlog::debug(
+			"User::CheckAndRobItems: User lacks gold [charId={} goldExpected={} goldActual={}]",
+			m_pUserData->m_id, gold, m_pUserData->m_iGold);
+		return false;
+	}
+
+	// last, rob the items.  outside of a concurrency issue, this shouldn't fail
+	for (auto itr = items.begin(); itr != items.end(); ++itr)
+	{
+		const ItemPair& item = *itr;
+		if (item.ItemId == -1 || item.Count <= 0)
+			continue;
+
+		if (!RobItem(item.ItemId, item.Count))
+		{
+			// This is not official behavior but rolling back stolen resources
+			// on failure seems like a good idea.
+
+			// failed to rob an item
+			// refund gold
+			if (gold > 0)
+				GoldGain(gold);
+
+			// refund previously removed items
+			for (auto restoreItr = items.begin(); restoreItr != itr; ++restoreItr)
+			{
+				const ItemPair& itemToRestore = *restoreItr;
+				if (itemToRestore.ItemId == -1 || itemToRestore.Count <= 0)
+					continue;
+
+				GiveItem(itemToRestore.ItemId, itemToRestore.Count);
+			}
+
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -12277,38 +12576,31 @@ bool CUser::CheckPromotionEligible()
 	if (npc == nullptr)
 		return false;
 
-	if (CheckClass(
-			CLASS_KA_GUARDIAN, CLASS_KA_PENETRATOR, CLASS_KA_NECROMANCER, CLASS_KA_DARKPRIEST)
-		|| CheckClass(CLASS_EL_PROTECTOR, CLASS_EL_ASSASIN, CLASS_EL_ENCHANTER, CLASS_EL_DRUID))
+	// Here we return that the user is already mastered
+	switch (m_pUserData->m_sClass)
 	{
-		// Here we return that the user is already mastered
-		switch (m_pUserData->m_sClass)
-		{
-			case CLASS_EL_PROTECTOR:
-			case CLASS_KA_GUARDIAN:
-				SendSay(-1, -1, 6006);
-				break;
+		case CLASS_EL_PROTECTOR:
+		case CLASS_KA_GUARDIAN:
+			SendSay(-1, -1, 6006);
+			return false;
 
-			case CLASS_EL_ASSASIN:
-			case CLASS_KA_PENETRATOR:
-				SendSay(-1, -1, 7006);
-				break;
+		case CLASS_EL_ASSASSIN:
+		case CLASS_KA_PENETRATOR:
+			SendSay(-1, -1, 7006);
+			return false;
 
-			case CLASS_EL_ENCHANTER:
-			case CLASS_KA_NECROMANCER:
-				SendSay(-1, -1, 8006);
-				break;
+		case CLASS_EL_ENCHANTER:
+		case CLASS_KA_NECROMANCER:
+			SendSay(-1, -1, 8006);
+			return false;
 
-			case CLASS_EL_DRUID:
-			case CLASS_KA_DARKPRIEST:
-				SendSay(-1, -1, 9006);
-				break;
+		case CLASS_EL_DRUID:
+		case CLASS_KA_DARKPRIEST:
+			SendSay(-1, -1, 9006);
+			return false;
 
-			default:
-				break;
-		}
-
-		return false;
+		default:
+			break;
 	}
 
 	constexpr int MASTER_LVL = 60;
@@ -12855,7 +13147,7 @@ bool CUser::JobGroupCheck(int16_t jobgroupid) const
 					|| m_pUserData->m_sClass == CLASS_KA_PENETRATOR
 					|| m_pUserData->m_sClass == CLASS_EL_ROGUE
 					|| m_pUserData->m_sClass == CLASS_EL_RANGER
-					|| m_pUserData->m_sClass == CLASS_EL_ASSASIN)
+					|| m_pUserData->m_sClass == CLASS_EL_ASSASSIN)
 					return true;
 				break;
 
@@ -12899,7 +13191,7 @@ bool CUser::JobGroupCheck(int16_t jobgroupid) const
 
 			case JOB_GROUP_ASSASSIN:
 				if (m_pUserData->m_sClass == CLASS_KA_PENETRATOR
-					|| m_pUserData->m_sClass == CLASS_EL_ASSASIN)
+					|| m_pUserData->m_sClass == CLASS_EL_ASSASSIN)
 					return true;
 				break;
 
@@ -13127,6 +13419,15 @@ void CUser::RecvEditBox(char* pBuf)
 	pEventData = pEvent->m_arEvent.GetData(selevent);
 	if (pEventData == nullptr || !CheckEventLogic(pEventData))
 	{
+		ResetEditBox();
+		return;
+	}
+
+	if (!pEventData->_unhandledOpcodes.empty())
+	{
+		spdlog::error("User::RecvEditBox: failed to run event {} due to unhandled opcodes. "
+					  "[characterName={} unhandledOpcodes={}]",
+			selevent, m_pUserData->m_id, pEventData->_unhandledOpcodes);
 		ResetEditBox();
 		return;
 	}
@@ -14137,6 +14438,251 @@ float CUser::GetDistanceSquared2D(float targetX, float targetZ) const
 	const float dx = m_pUserData->m_curx - targetX;
 	const float dz = m_pUserData->m_curz - targetZ;
 	return (dx * dx) + (dz * dz);
+}
+
+void CUser::PromoteUserNovice()
+{
+	uint8_t newClass = static_cast<uint8_t>(m_pUserData->m_sClass);
+	switch (m_pUserData->m_sClass)
+	{
+		case CLASS_KA_WARRIOR:
+		case CLASS_EL_WARRIOR:
+			newClass += 4; // X01 -> X05
+			break;
+
+		case CLASS_KA_ROGUE:
+		case CLASS_EL_ROGUE:
+			newClass += 5; // X02 -> X07
+			break;
+
+		case CLASS_KA_WIZARD:
+		case CLASS_EL_WIZARD:
+			newClass += 6; // X03 -> X09
+			break;
+
+		case CLASS_KA_PRIEST:
+		case CLASS_EL_PRIEST:
+			newClass += 7; // X04 -> X11
+			break;
+
+		default:
+			// invalid current class
+			return;
+	}
+
+	if (!ValidatePromotion(static_cast<e_Class>(newClass)))
+		return;
+
+	char sendBuffer[128] {};
+	int sendIndex = 0;
+	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
+	SetByte(sendBuffer, CLASS_PROMOTION_REQ, sendIndex);
+	SetShort(sendBuffer, newClass, sendIndex);
+	SetShort(sendBuffer, _socketId, sendIndex);
+	m_pMain->Send_Region(sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ);
+
+	HandlePromotion(static_cast<e_Class>(newClass));
+
+	// Refresh Knights list
+	memset(sendBuffer, 0, sizeof(sendBuffer));
+	sendIndex = 0;
+	SetShort(sendBuffer, 0, sendIndex);
+	m_pMain->m_KnightsManager.CurrentKnightsMember(this, sendBuffer);
+}
+
+void CUser::PromoteUser()
+{
+	// item requirement lists
+	static constexpr ItemPair WARRIOR_ITEMS[] = { //
+		{ ITEM_LOBO_PENDANT, 1 }, { ITEM_LUPUS_PENDANT, 1 }, { ITEM_LYCAON_PENDANT, 1 },
+		{ ITEM_CRUDE_SAPPHIRE, 10 }, { ITEM_CRYSTAL, 10 }, { ITEM_OPAL, 10 }
+	};
+
+	static constexpr ItemPair ROGUE_ITEMS[] = { //
+		{ ITEM_TAIL_OF_SHAULA, 1 }, { ITEM_TAIL_OF_LESATH, 1 }, { ITEM_BLOOD_OF_GLYPTODONT, 10 },
+		{ ITEM_FANG_OF_BAKIRRA, 1 }, { ITEM_CRUDE_SAPPHIRE, 10 }, { ITEM_CRYSTAL, 10 },
+		{ ITEM_OPAL, 10 }
+	};
+
+	static constexpr ItemPair MAGE_ITEMS[] = { //
+		{ ITEM_KEKURI_RING, 1 }, { ITEM_GAVOLT_WING, 50 }, { ITEM_ZOMBIE_EYE, 50 },
+		{ ITEM_CURSED_BONE, 1 }, { ITEM_FEATHER_OF_HARPY_QUEEN, 1 },
+		{ ITEM_BLOOD_OF_GLYPTODONT, 10 }, { ITEM_CRUDE_SAPPHIRE, 10 }, { ITEM_CRYSTAL, 10 },
+		{ ITEM_OPAL, 10 }
+	};
+
+	static constexpr ItemPair PRIEST_ITEMS[] = { //
+		{ ITEM_HOLY_WATER_OF_TEMPLE, 1 }, { ITEM_CRUDE_SAPPHIRE, 10 }, { ITEM_CRYSTAL, 10 },
+		{ ITEM_OPAL, 10 }
+	};
+	static constexpr int PRIEST_GOLD_REQ = 10'000'000;
+
+	e_Class newClass                     = static_cast<e_Class>(m_pUserData->m_sClass + 1);
+
+	// Make sure user level is appropriate for current promotion and that
+	// the new class is a valid promotion path
+	if (!CheckPromotionEligible() || !ValidatePromotion(newClass))
+		return;
+
+	int16_t successMessage = -1;
+	e_QuestId masterQuest  = QUEST_INVALID;
+
+	switch (m_pUserData->m_sClass)
+	{
+		case CLASS_EL_BLADE:
+		case CLASS_KA_BERSERKER:
+			if (!CheckAndRobItems(WARRIOR_ITEMS))
+			{
+				// Send failure message - missing items
+				SendSay(-1, -1, 6007);
+				return;
+			}
+
+			successMessage = 6005;
+			masterQuest    = QUEST_MASTER_WARRIOR;
+			break;
+
+		case CLASS_KA_HUNTER:
+		case CLASS_EL_RANGER:
+			if (!CheckAndRobItems(ROGUE_ITEMS))
+			{
+				// Send failure message
+				SendSay(-1, -1, 7007);
+				return;
+			}
+
+			successMessage = 7005;
+			masterQuest    = QUEST_MASTER_ROGUE;
+			break;
+
+		case CLASS_KA_SORCERER:
+		case CLASS_EL_MAGE:
+			if (!CheckAndRobItems(MAGE_ITEMS))
+			{
+				// Send failure message
+				SendSay(-1, -1, 8007);
+				return;
+			}
+
+			successMessage = 8005;
+			masterQuest    = QUEST_MASTER_MAGE;
+			break;
+
+		case CLASS_KA_SHAMAN:
+		case CLASS_EL_CLERIC:
+			if (!CheckAndRobItems(PRIEST_ITEMS, PRIEST_GOLD_REQ))
+			{
+				// Send failure message
+				SendSay(-1, -1, 9007);
+				return;
+			}
+
+			successMessage = 9005;
+			masterQuest    = QUEST_MASTER_PRIEST;
+			break;
+
+		default:
+			// invalid input
+			return;
+	}
+
+	// Send success message
+	SendSay(-1, -1, successMessage);
+
+	if (!SaveEvent(masterQuest, QUEST_STATE_COMPLETE))
+	{
+		spdlog::debug("User::PromoteUser: Failed to save quest [charId={} questId={}]",
+			m_pUserData->m_id, static_cast<int16_t>(masterQuest));
+	}
+
+	char sendBuffer[128] {};
+	int sendIndex = 0;
+	SetByte(sendBuffer, WIZ_CLASS_CHANGE, sendIndex);
+	SetByte(sendBuffer, CLASS_PROMOTION_REQ, sendIndex);
+	SetShort(sendBuffer, newClass, sendIndex);
+	SetShort(sendBuffer, _socketId, sendIndex);
+	m_pMain->Send_Region(sendBuffer, sendIndex, m_pUserData->m_bZone, m_RegionX, m_RegionZ);
+
+	HandlePromotion(newClass);
+
+	// Refresh Knights list
+	memset(sendBuffer, 0, sizeof(sendBuffer));
+	sendIndex = 0;
+	SetShort(sendBuffer, 0, sendIndex);
+	m_pMain->m_KnightsManager.CurrentKnightsMember(this, sendBuffer);
+}
+
+bool CUser::SaveEvent(e_QuestId questId, e_QuestState questState)
+{
+	// invalid questId
+	if (questId < QUEST_MIN_ID || questId > QUEST_MAX_ID)
+	{
+		spdlog::debug("User::SaveEvent: Tried to save invalid quest [charId={} questId={}].",
+			m_pUserData->m_id, static_cast<int16_t>(questId));
+		return false;
+	}
+
+	int questIndex = -1, openSlotIndex = -1;
+	bool questExists = false;
+	for (int currentQuestIndex = 0; currentQuestIndex < MAX_QUEST; currentQuestIndex++)
+	{
+		_USER_QUEST& quest = m_pUserData->m_quests[currentQuestIndex];
+		if (quest.sQuestID == questId)
+		{
+			// quest found, stop loop
+			questExists = true;
+			questIndex  = currentQuestIndex;
+			break;
+		}
+
+		// mark an open slot in case we need to write a new record
+		if (openSlotIndex == -1 && (quest.sQuestID < QUEST_MIN_ID || quest.sQuestID > QUEST_MAX_ID))
+			openSlotIndex = currentQuestIndex;
+	}
+
+	if (!questExists)
+	{
+		// walked off the end of the list without finding an open slot or
+		// the requested quest
+		if (openSlotIndex == -1)
+		{
+			spdlog::debug("User::SaveEvent: Quest log full, couldn't save [charId={} questId={}].",
+				m_pUserData->m_id, static_cast<int16_t>(questId));
+			return false;
+		}
+
+		// if we walked off the end of the list but earmarked an open slot, use it
+		if (openSlotIndex != -1)
+			questIndex = openSlotIndex;
+	}
+
+	// sanity check bounds
+	if (questIndex < 0 || questIndex > MAX_QUEST)
+	{
+		spdlog::debug(
+			"User::SaveEvent: questIndex out of bounds [charId={} questIndex={} questId={}].",
+			m_pUserData->m_id, questIndex, static_cast<int16_t>(questId));
+		return false;
+	}
+
+	m_pUserData->m_quests[questIndex].sQuestID     = questId;
+	m_pUserData->m_quests[questIndex].byQuestState = questState;
+
+	if (!questExists)
+		++m_pUserData->m_sQuestCount;
+
+	if (questId >= QUEST_WARRIOR_70_QUEST && questId <= QUEST_PRIEST_70_QUEST)
+	{
+		int sendIndex = 0;
+		char sendBuff[32] {};
+		SetByte(sendBuff, WIZ_QUEST, sendIndex);
+		SetByte(sendBuff, QUEST_UPDATE, sendIndex);
+		SetShort(sendBuff, static_cast<int16_t>(questId), sendIndex);
+		SetByte(sendBuff, 1, sendIndex);
+		Send(sendBuff, sendIndex);
+	}
+
+	return true;
 }
 
 } // namespace Ebenezer
