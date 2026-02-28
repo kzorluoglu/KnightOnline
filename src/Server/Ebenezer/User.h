@@ -251,6 +251,7 @@ public:
 	void RecvDeleteChar(const char* pBuf);
 	bool ExistComEvent(int eventid) const;
 	void SaveComEvent(int eventid);
+	void SaveEvent(int eventid, int value);
 	bool CheckItemCount(int itemid, int16_t min, int16_t max) const;
 	bool CheckClanGrade(int min, int max) const;
 	bool CheckKnight() const;
@@ -283,36 +284,19 @@ public:
 	void RecvSelectMsg(char* pBuf);
 	void ResetSelectMsg();
 	bool GiveItem(int itemid, int16_t count);
-
-	/// \brief Attempts to count number of itemId from the user
-	/// \return true when all items were successfully taken, false otherwise
-	bool RobItem(int itemId, int16_t count);
-
-	/// \brief Attempts to remove all the items from the user in the input array
-	/// \return true when all items were successfully taken, false otherwise
-	bool CheckAndRobItems(std::span<const ItemPair> items, int gold = 0);
-
-	/// \brief Checks to see if a user has count number of itemIds
-	/// \return true when the user has count number of itemIds, false otherwise
-	bool CheckExistItem(int itemId, int16_t count) const;
-
-	/// \brief Checks to see if a user has up to 5 sets of items
-	/// \return true when the user has all the items, false otherwise
-	bool CheckExistItemAnd(int id1, int16_t count1, int id2, int16_t count2, int id3 = -1,
-		int16_t count3 = -1, int id4 = -1, int16_t count4 = -1, int id5 = -1,
-		int16_t count5 = -1) const;
-
-	/// \brief Checks to see if a user has all the items in the input array
-	/// \return true when the user has all the items, false otherwise
-	bool CheckExistItemAnd(std::span<const ItemPair> items) const;
-
+	bool RobItem(int itemid, int16_t count);
+	bool CheckExistItem(int itemid, int16_t count) const;
+	bool CheckExistItemAnd(int itemid1, int16_t count1, int itemid2, int16_t count2,
+		int itemid3, int16_t count3, int itemid4, int16_t count4, int itemid5, int16_t count5) const;
 	bool CheckWeight(int itemid, int16_t count) const;
 	bool CheckSkillPoint(uint8_t skillnum, uint8_t min, uint8_t max) const;
 	bool CheckSkillTotal(uint8_t min, uint8_t max) const;
 	bool CheckStatTotal(uint8_t min, uint8_t max) const;
-	bool CheckExistEvent(e_QuestId questId, e_QuestState questState) const;
-	bool GoldLose(int amount);
-	void GoldGain(int amount);
+	bool CheckExistEvent(int16_t questId, uint8_t questState) const;
+	bool GoldLose(int gold);
+	void PromoteUser();
+	void PromoteUserNovice();
+	void GoldGain(int gold);
 	void SendItemWeight();
 	void ItemLogToAgent(const char* srcid, const char* tarid, int type, int64_t serial, int itemid,
 		int count, int durability);

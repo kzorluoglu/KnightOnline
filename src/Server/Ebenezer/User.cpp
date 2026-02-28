@@ -9219,11 +9219,18 @@ void CUser::NovicePromotionStatusRequest()
 
 	uint8_t result = CLASS_CHANGE_SUCCESS;
 	if (m_pUserData->m_bLevel < 10)
-		result = CLASS_CHANGE_NOT_YET;
+	{
+		SetByte(sendBuffer, 2, sendIndex);
+	}
 	else if ((m_pUserData->m_sClass % 100) > 4)
-		result = CLASS_CHANGE_ALREADY;
+	{
+		SetByte(sendBuffer, 3, sendIndex);
+	}
+	else
+	{
+		SetByte(sendBuffer, 1, sendIndex);
+	}
 
-	SetByte(sendBuffer, result, sendIndex);
 	Send(sendBuffer, sendIndex);
 
 	spdlog::debug("User::NovicePromotionStatusRequest: Check triggered [charId={} level={} "
@@ -12013,12 +12020,15 @@ bool CUser::CheckEventLogic(const EVENT_DATA* pEventData)
 
 bool CUser::RunEvent(const EVENT_DATA* pEventData)
 {
-	for (EXEC* pExec : pEventData->m_arExec)
-	{
-		if (pExec == nullptr)
-			break;
+		for (EXEC* pExec : pEventData->m_arExec)
+		{
+			if (pExec == nullptr)
+				break;
 
-		switch (pExec->m_Exec)
+			if (pExec->m_Exec == EXEC_NONE)
+				continue;
+
+			switch (pExec->m_Exec)
 		{
 			case EXEC_SAY:
 				SendNpcSay(pExec);
@@ -12082,6 +12092,10 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 				SaveComEvent(pExec->m_ExecInt[0]);
 				break;
 
+			case EXEC_SAVE_EVENT:
+				SaveEvent(pExec->m_ExecInt[0], pExec->m_ExecInt[1]);
+				break;
+
 			case EXEC_ROB_NOAH:
 				GoldLose(pExec->m_ExecInt[0]);
 				break;
@@ -12107,42 +12121,16 @@ bool CUser::RunEvent(const EVENT_DATA* pEventData)
 					static_cast<float>(pExec->m_ExecInt[2]));
 				break;
 
+			case EXEC_PROMOTE_USER:
+				PromoteUser();
+				break;
+
 			case EXEC_PROMOTE_USER_NOVICE:
 				PromoteUserNovice();
 				break;
 
-			case EXEC_SKILL_POINT_DISTRIBUTE:
-			case EXEC_STAT_POINT_DISTRIBUTE:
-				ClassChangeRespecReq();
-				break;
-
-			case EXEC_LEVEL_UP:
-				ExpChange(m_iMaxExp);
-				break;
-
-			case EXEC_EXP_CHANGE:
-				ExpChange(pExec->m_ExecInt[0]);
-				break;
-
-			case EXEC_ROLL_DICE:
-				m_sEventDiceRoll = myrand(1, pExec->m_ExecInt[0]);
-				break;
-
-			case EXEC_CHANGE_LOYALTY:
-				ChangeLoyalty(pExec->m_ExecInt[0], true);
-				break;
-
-			case EXEC_SKILL_POINT_FREE:
-				SkillPointResetRequest(true);
-				break;
-
-			case EXEC_STAT_POINT_FREE:
-				StatPointResetRequest(true);
-				break;
-
-			case EXEC_CHANGE_MANNER:
-				ChangeMannerPoint(pExec->m_ExecInt[0]);
-				break;
+			case EXEC_RETURN:
+				return false;
 
 			default:
 				spdlog::warn("User::RunEvent: unhandled opcode. opcode={:02X} zoneId={}",
@@ -12337,31 +12325,36 @@ bool CUser::CheckExistItem(int itemId, int16_t count) const
 	return false;
 }
 
-bool CUser::CheckExistItemAnd(int id1, int16_t count1, int id2, int16_t count2, int id3,
-	int16_t count3, int id4, int16_t count4, int id5, int16_t count5) const
+bool CUser::CheckExistItemAnd(int itemid1, int16_t count1, int itemid2, int16_t count2,
+	int itemid3, int16_t count3, int itemid4, int16_t count4, int itemid5, int16_t count5) const
 {
-	const ItemPair items[5] { { id1, count1 }, { id2, count2 }, { id3, count3 }, { id4, count4 },
-		{ id5, count5 } };
-	return CheckExistItemAnd(items);
-}
-
-bool CUser::CheckExistItemAnd(const std::span<const ItemPair> items) const
-{
-	for (const ItemPair& item : items)
+	struct Requirement
 	{
-		if (item.ItemId != -1 && !CheckExistItem(item.ItemId, item.Count))
-		{
-			spdlog::debug(
-				"User::CheckExistItemAnd: User missing items [charId={} itemId={} count={}]",
-				m_pUserData->m_id, item.ItemId, item.Count);
+		int id;
+		int16_t count;
+	};
+
+	const Requirement requirements[] = {
+		{ itemid1, count1 },
+		{ itemid2, count2 },
+		{ itemid3, count3 },
+		{ itemid4, count4 },
+		{ itemid5, count5 },
+	};
+
+	for (const Requirement& requirement : requirements)
+	{
+		if (requirement.id <= 0 || requirement.count < 0)
+			continue;
+
+		if (!CheckExistItem(requirement.id, requirement.count))
 			return false;
-		}
 	}
 
 	return true;
 }
 
-bool CUser::RobItem(int itemId, int16_t count)
+bool CUser::RobItem(int itemid, int16_t count)
 {
 	int sendIndex = 0;
 	char sendBuffer[256] {};
@@ -12649,6 +12642,352 @@ bool CUser::CheckPromotionEligible()
 	}
 
 	return false;
+}
+
+void CUser::PromoteUser()
+{
+	char Dst[6] {};
+	int16_t Src = 0;
+	bool stageSuccess = false;
+	// Track the target class across the goto-heavy flow.
+	int16_t newClass = -50;
+
+	// Bail early if the player isn’t eligible for promotion.
+	if (!CheckPromotionEligible())
+		return;
+
+	// Cache the current class and a few working vars used by the legacy quest script.
+	int currentClass = m_pUserData->m_sClass;
+	int v5 = 0;
+	int v3 = 0;
+	int v7 = 0;
+
+	// Knight/archer branches share this decompiled state machine.
+	if (currentClass > 205)
+	{
+		v5 = currentClass - 207;
+		if (v5 == 0)
+			goto hunter_ranger_branch;
+	}
+	else
+	{
+		v3 = currentClass - 105;
+		if (currentClass == 205 || v3 == 0)
+		{
+			// Check and consume quest items for warrior path.
+			if (!CheckExistItemAnd(320410011, 1, 320410012, 1, 320410013, 1, 389074000, 10,
+					389075000, 10)
+				|| !CheckExistItem(389076000, 10)
+				|| !RobItem(320410011, 1)
+				|| !RobItem(320410012, 1))
+			{
+				goto LABEL_71;
+			}
+
+			stageSuccess = RobItem(320410013, 1);
+			goto LABEL_32;
+		}
+
+		v5 = v3 - 2;
+		if (v5 == 0)
+			goto hunter_ranger_branch;
+	}
+
+	v7 = v5 - 2;
+	if (v7)
+	{
+		// Mage/priest branch: require different items + gold sink.
+		if (v7 != 2
+			|| !CheckExistItemAnd(379047000, 1, 389074000, 10, 389075000, 10, 389076000, 10, -1, -1)
+			|| !GoldLose(10000000))
+		{
+			goto LABEL_71;
+		}
+
+		stageSuccess = RobItem(379047000, 1);
+		goto LABEL_32;
+	}
+
+	// Default branch requires the full material set.
+	if (!CheckExistItemAnd(330310014, 1, 379043000, 50, 379044000, 50, 379045000, 1, 379046000, 1)
+		|| !CheckExistItemAnd(379014000, 10, 389074000, 10, 389075000, 10, 389076000, 10, -1, -1)
+		|| !RobItem(330310014, 1)
+		|| !RobItem(379043000, 50)
+		|| !RobItem(379044000, 50)
+		|| !RobItem(379045000, 1)
+		|| !RobItem(379046000, 1))
+	{
+		goto LABEL_71;
+	}
+
+	stageSuccess = RobItem(379014000, 10);
+	goto LABEL_32;
+
+hunter_ranger_branch:
+	// Hunter/ranger path uses another material set.
+	if (!CheckExistItemAnd(379040000, 1, 379041000, 1, 379014000, 10, 379042000, 1, 389074000, 10)
+		|| !CheckExistItem(389075000, 10)
+		|| !CheckExistItem(389076000, 10)
+		|| !RobItem(379040000, 1)
+		|| !RobItem(379041000, 1))
+	{
+		goto LABEL_71;
+	}
+
+	stageSuccess = RobItem(379042000, 1);
+
+LABEL_32:
+	if (stageSuccess && RobItem(389074000, 10) && RobItem(389075000, 10)
+		&& RobItem(389076000, 10))
+	{
+		// If user isn’t already mastered, determine the next class and mark quest progress.
+		if (!CheckClass(106, 108, 110, 112) && !CheckClass(206, 208, 210, 212))
+		{
+			int classId = currentClass;
+
+			if (classId > 205)
+			{
+				int diff = classId - 207;
+				if (diff == 0)
+				{
+					SendSay(-1, -1, 7005);
+					newClass = -48;
+					SaveEvent(2, 2);
+					goto LABEL_58;
+				}
+
+				if (diff == 2)
+				{
+					SendSay(-1, -1, 8005);
+					newClass = -46;
+					SaveEvent(3, 2);
+					goto LABEL_58;
+				}
+
+				if (diff == 4)
+				{
+					SendSay(-1, -1, 9005);
+					newClass = -44;
+					SaveEvent(4, 2);
+					goto LABEL_58;
+				}
+
+				return;
+			}
+
+			if (classId == 205)
+			{
+				SendSay(-1, -1, 6005);
+				newClass = 206;
+			}
+			else
+			{
+				int offset = classId - 105;
+				if (offset == 0)
+				{
+					SendSay(-1, -1, 6005);
+					newClass = 106;
+				}
+				else if (offset == 2)
+				{
+					SendSay(-1, -1, 7005);
+					newClass = 108;
+					SaveEvent(2, 2);
+					goto LABEL_58;
+				}
+				else if (offset == 4)
+				{
+					SendSay(-1, -1, 8005);
+					newClass = 110;
+					SaveEvent(3, 2);
+					goto LABEL_58;
+				}
+				else if (offset == 6)
+				{
+					SendSay(-1, -1, 9005);
+					newClass = 112;
+					SaveEvent(4, 2);
+					goto LABEL_58;
+				}
+				else
+				{
+					return;
+				}
+			}
+
+			SaveEvent(1, 2);
+			goto LABEL_58;
+		}
+
+		// Already mastered: just inform the player they are at the limit.
+		int heroClass = currentClass;
+		int diff = 0;
+		bool isZero = false;
+
+		if (heroClass > 206)
+		{
+			diff = heroClass - 208;
+			isZero = (diff == 0);
+		}
+		else
+		{
+			int temp = heroClass - 106;
+			if (heroClass == 206 || temp == 0)
+			{
+				SendSay(-1, -1, 6006);
+				return;
+			}
+			diff = temp - 2;
+			isZero = (diff == 0);
+		}
+
+		if (isZero)
+		{
+			SendSay(-1, -1, 7006);
+		}
+		else
+		{
+			int next = diff - 2;
+			if (next == 0)
+			{
+				SendSay(-1, -1, 8006);
+			}
+			else if (next == 2)
+			{
+				SendSay(-1, -1, 9006);
+			}
+		}
+		return;
+	}
+
+LABEL_71:
+	{
+		// Failure path: send the appropriate dialogue for missing items or wrong class.
+		int classId = currentClass;
+		if (classId > 206)
+		{
+			int diff = classId - 208;
+			if (diff == 0)
+			{
+				SendSay(-1, -1, 7007);
+				return;
+			}
+
+			int next = diff - 2;
+			if (next == 0)
+			{
+				SendSay(-1, -1, 8007);
+				return;
+			}
+
+			if (next == 2)
+				SendSay(-1, -1, 9007);
+
+			return;
+		}
+
+		int diff = classId - 106;
+		if (classId == 206 || diff == 0)
+		{
+			SendSay(-1, -1, 6007);
+			return;
+		}
+
+		int next = diff - 2;
+		if (next == 0)
+		{
+			SendSay(-1, -1, 7007);
+			return;
+		}
+
+		if (next == 2)
+		{
+			SendSay(-1, -1, 9007);
+			return;
+		}
+
+		SendSay(-1, -1, 8007);
+		return;
+	}
+
+LABEL_58:
+	// Build and broadcast the class-change packet to nearby players.
+	Src = newClass;
+	Dst[0] = 0x34;
+	Dst[1] = 6;
+	memcpy(&Dst[2], &Src, sizeof(Src)); // write new class into payload
+	// Use the current socket ID in place of the missing m_Sid field.
+	Src = static_cast<int16_t>(GetSocketID()); // identify who changed class
+	memcpy(&Dst[4], &Src, sizeof(Src));       // write user id into payload
+	m_pMain->Send_Region(Dst, 6, m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, false);
+	memset(Dst, 0, sizeof(Dst));               // reuse buffer for self-update
+	Dst[0] = 2;                                // opcode for self class change
+	Dst[1] = static_cast<char>(newClass);      // new class value
+	ClassChange(Dst);                          // apply change locally
+	memset(Dst, 0, sizeof(Dst));               // reuse buffer for clan update
+	Src = 0;                                   // reset status flag
+	memcpy(Dst, &Src, sizeof(Src));            // payload for knights update
+	m_pMain->m_KnightsManager.CurrentKnightsMember(this, Dst); // refresh guild member info
+	return;
+}
+
+void CUser::PromoteUserNovice()
+{
+	constexpr uint8_t kPromotionSubcommand = 0x06; // Client "promotion" subcommand.
+	int16_t newClass = -1; // Target class after promotion.
+
+	switch (m_pUserData->m_sClass)
+	{
+		case KARUWARRRIOR: // Karus Warrior -> Berserker.
+			newClass = CLASS_KA_BERSERKER; // Assign new class.
+			break; // Stop switch.
+		case KARUROGUE: // Karus Rogue -> Hunter.
+			newClass = CLASS_KA_HUNTER; // Assign new class.
+			break; // Stop switch.
+		case KARUWIZARD: // Karus Wizard -> Sorcerer.
+			newClass = CLASS_KA_SORCERER; // Assign new class.
+			break; // Stop switch.
+		case KARUPRIEST: // Karus Priest -> Shaman.
+			newClass = CLASS_KA_SHAMAN; // Assign new class.
+			break; // Stop switch.
+		case ELMORWARRRIOR: // Elmorad Warrior -> Blade.
+			newClass = CLASS_EL_BLADE; // Assign new class.
+			break; // Stop switch.
+		case ELMOROGUE: // Elmorad Rogue -> Ranger.
+			newClass = CLASS_EL_RANGER; // Assign new class.
+			break; // Stop switch.
+		case ELMOWIZARD: // Elmorad Wizard -> Mage.
+			newClass = CLASS_EL_MAGE; // Assign new class.
+			break; // Stop switch.
+		case ELMOPRIEST: // Elmorad Priest -> Cleric.
+			newClass = CLASS_EL_CLERIC; // Assign new class.
+			break; // Stop switch.
+		default: // Not a base class.
+			return; // Abort.
+	}
+
+	m_pUserData->m_sClass = newClass; // Apply new class server-side.
+
+	if (m_sPartyIndex != -1) // If in a party, notify members.
+	{
+		char sendBuffer[128] {}; // Party packet buffer.
+		int sendIndex = 0; // Packet offset.
+		SetByte(sendBuffer, WIZ_PARTY, sendIndex); // Party opcode.
+		SetByte(sendBuffer, PARTY_CLASSCHANGE, sendIndex); // Party class-change sub-opcode.
+		SetShort(sendBuffer, _socketId, sendIndex); // Sender socket.
+		SetShort(sendBuffer, m_pUserData->m_sClass, sendIndex); // New class.
+		m_pMain->Send_PartyMember(m_sPartyIndex, sendBuffer, sendIndex); // Broadcast to party.
+	}
+
+	char Dst[6] {}; // Promotion packet buffer.
+	int16_t Src = newClass; // New class value.
+	Dst[0] = WIZ_CLASS_CHANGE; // Main opcode.
+	Dst[1] = kPromotionSubcommand; // Promotion subcommand.
+	memcpy(&Dst[2], &Src, sizeof(Src)); // Write new class into payload.
+	Src = static_cast<int16_t>(GetSocketID()); // Actor socket id.
+	memcpy(&Dst[4], &Src, sizeof(Src)); // Write socket id into payload.
+	m_pMain->Send_Region(Dst, sizeof(Dst), m_pUserData->m_bZone, m_RegionX, m_RegionZ, nullptr, // Broadcast to nearby players.
+		false); // Use region buffering.
 }
 
 // Receive menu reply from client.
@@ -13701,6 +14040,56 @@ bool CUser::ExistComEvent(int eventid) const
 	}
 
 	return false;
+}
+
+void CUser::SaveEvent(int eventid, int value)
+{
+	if (eventid <= 0 || eventid > 100)
+		return;
+
+	uint8_t newState = static_cast<uint8_t>(value);
+	if (newState > QUEST_STATE_COMPLETE)
+		newState = QUEST_STATE_COMPLETE;
+
+	int emptyIndex = -1;
+	for (int i = 0; i < MAX_QUEST; i++)
+	{
+		_USER_QUEST& quest = m_pUserData->m_quests[i];
+		if (quest.sQuestID == eventid)
+		{
+			if (newState == QUEST_STATE_NOT_STARTED)
+			{
+				quest.sQuestID = 0;
+				quest.byQuestState = QUEST_STATE_NOT_STARTED;
+			}
+			else
+			{
+				quest.byQuestState = newState;
+			}
+			goto recount;
+		}
+
+		if (emptyIndex == -1 && quest.sQuestID == 0)
+			emptyIndex = i;
+	}
+
+	if (newState != QUEST_STATE_NOT_STARTED && emptyIndex != -1)
+	{
+		_USER_QUEST& quest = m_pUserData->m_quests[emptyIndex];
+		quest.sQuestID = eventid;
+		quest.byQuestState = newState;
+	}
+
+recount:
+	{
+		int16_t total = 0;
+		for (int i = 0; i < MAX_QUEST; i++)
+		{
+			if (m_pUserData->m_quests[i].sQuestID > 0)
+				++total;
+		}
+		m_pUserData->m_sQuestCount = total;
+	}
 }
 
 void CUser::RecvDeleteChar(const char* pBuf)

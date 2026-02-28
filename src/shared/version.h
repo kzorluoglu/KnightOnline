@@ -3,6 +3,6 @@
 
 #pragma once
 
-inline constexpr int __VERSION = 1298;
+inline constexpr int __VERSION = 1098;
 
 #endif // SHARED_VERSION_H

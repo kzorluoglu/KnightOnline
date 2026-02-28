@@ -73,6 +73,12 @@ bool EXEC::Parse(const char* line, const std::string& filename, int lineNumber)
 			argsToParse = 3;
 			break;
 
+		// E SAVE_EVENT {quest ID} {quest state}
+		case "SAVE_EVENT"_djb2:
+			m_Exec      = EXEC_SAVE_EVENT;
+			argsToParse = 2;
+			break;
+
 		// E GIVE_NOAH {amount}
 		case "GIVE_NOAH"_djb2:
 			m_Exec      = EXEC_GIVE_NOAH;
@@ -176,6 +182,16 @@ bool EXEC::Parse(const char* line, const std::string& filename, int lineNumber)
 		case "CHANGE_MANNER"_djb2:
 			m_Exec      = EXEC_CHANGE_MANNER;
 			argsToParse = 1;
+			break;
+
+		// E PROMOTE_USER_NOVICE
+		case "PROMOTE_USER_NOVICE"_djb2:
+			m_Exec = EXEC_PROMOTE_USER_NOVICE;
+			break;
+
+		// E PROMOTE_USER
+		case "PROMOTE_USER"_djb2:
+			m_Exec = EXEC_PROMOTE_USER;
 			break;
 
 		default:

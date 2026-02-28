@@ -54,6 +54,8 @@ server_config.h
 *.txt
 last-build-states/
 .env
+.vs
+web/
 
 # Do not ignore CMakeLists.txt
 !CMakeLists.txt
